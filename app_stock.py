@@ -1767,7 +1767,7 @@ class StockManagerApp(ctk.CTk):
             if f"{row[2]} ({row[1]})" == choice:
                 # แสดงชื่อ: Product name, รายละเอียด: Detail, ราคา: Price บาท
                 product_name = row[2] if len(row) > 2 else ""
-                detail = row[4] if len(row) > 4 else ""
+                detail = row[3] if len(row) > 3 else ""
                 price = row[5] if len(row) > 5 else "0"
                 
                 details_text = f"ชื่อ: {product_name}\nรายละเอียด: {detail}\nราคา: {price} บาท"
