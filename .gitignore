@@ -36,3 +36,4 @@ ads_output/
 
 # Logs
 *.log
+credentials.json

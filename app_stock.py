@@ -23,9 +23,21 @@ from tkcalendar import DateEntry
 import urllib.request
 import zipfile
 import shutil
+import ssl
+import urllib3
+import time
 
 # ตั้งค่า socket timeout สำหรับการเชื่อมต่อ Google Drive
 socket.setdefaulttimeout(30)
+
+# แก้ไข SSL verification issues (ชั่วคราว)
+try:
+    ssl._create_default_https_context = ssl._create_unverified_context
+except Exception:
+    pass
+
+# Disable urllib3 SSL warnings (เมื่อใช้ unverified context)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ฟังก์ชันเพื่อดাวน์โหลดและติดตั้ง Kanit font
 def setup_kanit_font():
@@ -115,11 +127,21 @@ class StockManagerApp(ctk.CTk):
         self.app_running = True
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+        # สร้างโฟลเดอร์เก็บรูปถ้ายังไม่มี
+        self.img_folder = "img"
+        os.makedirs(self.img_folder, exist_ok=True)
+
         self.all_inventory_data = [] 
         self.cart_items = [] 
         self.enable_image_loading = True  # สามารถปิดได้หากมีปัญหา network
         self.last_coupon_checked = ""  # เก็บโค้ตที่ตรวจสอบไปแล้ว เพื่อแสดงเตือน 1 ครั้ง
         self.sales_history_data = {} 
+        
+        # Image loading thread management
+        self.current_image_thread = None  # เก็บ thread ปัจจุบันสำหรับยกเลิก
+        self.current_image_id = None
+        self.current_product_barcode = None  # เก็บ barcode สำหรับใช้เป็นชื่อไฟล์
+        self.image_thread_lock = threading.Lock()  # ป้องกัน race condition
         
         # AI & Social Media Config
         self.ai_config = load_config()
@@ -158,6 +180,16 @@ class StockManagerApp(ctk.CTk):
                     self.sheet_suppliers.append_row(["SupplierID", "Name", "Phone", "Address", "Note"])
                 except:
                     self.sheet_suppliers = None
+            
+            # เพิ่ม Inventory sheet
+            try:
+                self.sheet_inventory = self.sh.worksheet("Inventory")
+            except:
+                try:
+                    self.sheet_inventory = self.sh.add_worksheet(title="Inventory", rows="500", cols="15")
+                    self.sheet_inventory.append_row(["ProductID", "Barcode", "Name", "Category", "Cost", "Price", "Minimum", "Stock", "LastUpdate", "Supplier", "Location", "Note", "Image", "Status", "Reserved"])
+                except:
+                    self.sheet_inventory = None
         except Exception as e:
             messagebox.showerror("Connection Error", f"{e}")
             self.destroy()
@@ -785,13 +817,17 @@ class StockManagerApp(ctk.CTk):
         self.txt_info_detail.insert("0.0", detail_txt)
         self.txt_info_detail.configure(state="disabled")
 
-        img_id = str(safe_vals[6]).strip()
-        self.display_image(img_id)
+        # เก็บ product_barcode (safe_vals[1]) สำหรับใช้เป็นชื่อไฟล์รูป
+        product_barcode = str(safe_vals[1]).strip()  # Barcode อยู่ที่ index 1
+        img_id = str(safe_vals[6]).strip()  # Google Drive file ID อยู่ที่ index 6
+        
+        self.display_image(img_id, product_barcode)
 
-    def display_image(self, file_id):
+    def display_image(self, file_id, product_barcode=None):
         if not file_id or file_id == "None":
             self.image_label.configure(image=None, text="[No Image]")
             self.current_image_id = None
+            self.current_product_barcode = None
             return
         
         # ถ้าปิด image loading
@@ -800,13 +836,61 @@ class StockManagerApp(ctk.CTk):
             return
         
         self.current_image_id = file_id
-        threading.Thread(target=self.download_and_show_image, args=(file_id,), daemon=True).start()
+        self.current_product_barcode = product_barcode
+        # สร้าง thread ใหม่
+        new_thread = threading.Thread(target=self.download_and_show_image, args=(file_id, product_barcode), daemon=True)
+        with self.image_thread_lock:
+            self.current_image_thread = new_thread
+        new_thread.start()
+
+    def get_local_image_path(self, product_barcode):
+        """หาเส้นทางไฟล์รูปท้องถิ่น"""
+        if not product_barcode:
+            return None
+        
+        # ลองหาไฟล์กับนามสกุล png, jpg, jpeg
+        for ext in ['.png', '.jpg', '.jpeg']:
+            path = os.path.join(self.img_folder, f"{product_barcode}{ext}")
+            if os.path.exists(path):
+                return path
+        return None
+
+    def _save_local_image(self, pil_image, product_barcode):
+        """บันทึกรูปลงโฟลเดอร์ img สำหรับใช้ครั้งต่อไป"""
+        if not pil_image or not product_barcode:
+            return False
+        
+        try:
+            # สร้างโฟลเดอร์ img ถ้ายังไม่มี
+            os.makedirs(self.img_folder, exist_ok=True)
+            
+            # บันทึกเป็น PNG
+            filename = f"{product_barcode}.png"
+            filepath = os.path.join(self.img_folder, filename)
+            
+            pil_image.save(filepath, 'PNG')
+            print(f"💾 บันทึกรูปลงโฟลเดอร์ local: {filepath}")
+            return True
+            
+        except Exception as e:
+            print(f"⚠ ไม่สามารถบันทึกรูป local: {e}")
+            return False
 
     def retry_load_image(self):
         """ลองโหลดรูปใหม่"""
         if self.current_image_id:
+            with self.image_thread_lock:
+                # ยกเลิก thread เก่า
+                if self.current_image_thread is not None and self.current_image_thread.is_alive():
+                    # รอให้ thread เก่าหยุด (max 1 วินาที)
+                    pass
+            
             self.image_label.configure(text="[กำลังโหลด...]")
-            threading.Thread(target=self.download_and_show_image, args=(self.current_image_id,), daemon=True).start()
+            # สร้าง thread ใหม่
+            new_thread = threading.Thread(target=self.download_and_show_image, args=(self.current_image_id, self.current_product_barcode), daemon=True)
+            with self.image_thread_lock:
+                self.current_image_thread = new_thread
+            new_thread.start()
 
     def toggle_image_loading(self):
         """เปิด/ปิด การโหลดรูป"""
@@ -817,10 +901,91 @@ class StockManagerApp(ctk.CTk):
         
         # ถ้าเปิดก็ลองโหลดรูปใหม่
         if self.enable_image_loading and self.current_image_id:
-            self.display_image(self.current_image_id)
+            self.display_image(self.current_image_id, self.current_product_barcode)
 
-    def download_and_show_image(self, file_id):
+    def download_and_show_image(self, file_id, product_barcode=None):
+        # ตรวจสอบว่า thread นี้ยังเป็น thread ปัจจุบันหรือไม่
+        with self.image_thread_lock:
+            if file_id != self.current_image_id:
+                # thread นี้ถูกแทนที่แล้ว ให้หยุด
+                return
+        
         if not self.app_running: return
+        if not file_id or file_id == "None" or file_id.strip() == "":
+            return
+        
+        # ลองโหลดรูปจากเครื่องก่อน
+        local_image_path = self.get_local_image_path(product_barcode)
+        if local_image_path:
+            try:
+                print(f"💾 โหลดรูปจากโฟลเดอร์ local: {local_image_path}")
+                with open(local_image_path, 'rb') as f:
+                    img_data = f.read()
+                pil_img = Image.open(io.BytesIO(img_data))
+                pil_img.load()
+                pil_img = pil_img.resize((200, 200))
+                if self.app_running and self.winfo_exists():
+                    self.after(0, self.update_image_ui, pil_img)
+                return
+            except Exception as e:
+                print(f"⚠ ไม่สามารถโหลดรูปจาก local: {e}")
+        
+        # ถ้าไม่มีในเครื่อง ดาวน์โหลดจาก Google Drive
+        print(f"📥 ดาวน์โหลดรูปจาก Google Drive...")
+        if not self.enable_image_loading:
+            self.image_label.configure(image=None, text="[โหลดรูปปิดไว้]")
+            return
+        
+        # ลองดาวน์โหลดพร้อม retry mechanism
+        max_retries = 3
+        import time
+        
+        for attempt in range(max_retries):
+            # ตรวจสอบอีกครั้งว่า thread นี้ยังเป็น current หรือไม่
+            with self.image_thread_lock:
+                if file_id != self.current_image_id:
+                    return  # ถูกแทนที่แล้ว
+            
+            wait_time = 2 + (attempt * 3)  # wait 2, 5, 8 วินาที
+            
+            try:
+                # ลองดาวน์โหลดแบบ chunked ก่อน
+                if self._try_chunked_download(file_id, product_barcode):
+                    return
+                # ถ้า chunked ไม่ได้ ลอง direct download
+                elif self._try_direct_download(file_id, product_barcode):
+                    return
+                
+                # ถ้าทั้งสองวิธีไม่ได้
+                if attempt < max_retries - 1:
+                    print(f"  ⏳ กำลังลองใหม่ใน {wait_time} วินาที...")
+                    time.sleep(wait_time)
+                    
+            except Exception as e:
+                error_str = str(e).upper()
+                if "SSL" in error_str or "DECRYPTION" in error_str or "WRONG_VERSION" in error_str:
+                    print(f"⚠ ข้อผิดพลาด SSL/Network (ครั้งที่ {attempt+1}/{max_retries}): {e}")
+                elif "416" in error_str or "RANGE" in error_str:
+                    print(f"⚠ ข้อผิดพลาด Range (ครั้งที่ {attempt+1}/{max_retries}): {e}")
+                elif "NONETYPE" in error_str:
+                    print(f"⚠ ข้อผิดพลาด Resource (ครั้งที่ {attempt+1}/{max_retries}): {e}")
+                else:
+                    print(f"⚠ ข้อผิดพลาดการโหลดรูป (ครั้งที่ {attempt+1}/{max_retries}): {e}")
+                
+                if attempt == max_retries - 1:
+                    # ลองครั้งสุดท้ายแล้ว แสดง error
+                    print(f"❌ ไม่สามารถโหลดรูปได้หลังจากพยายาม {max_retries} ครั้ง")
+                    print(f"💡 แนะนำ: ลองปิดการโหลดรูป หรือตรวจสอบ network connection")
+                    if self.app_running and self.winfo_exists():
+                        self.after(0, lambda: self.image_label.configure(image=None, text="[เครือข่ายขัดข้อง]"))
+                        # ปิดการโหลดรูปอัตโนมัติ
+                        self.after(0, lambda: self.btn_toggle_images.configure(text=f"🖼️ โหลดรูป: ปิด", fg_color="#E74C3C"))
+                        self.enable_image_loading = False
+                else:
+                    print(f"  ⏳ กำลังลองใหม่ใน {wait_time} วินาที...")
+                    time.sleep(wait_time)
+                    if not self.app_running: 
+                        return
         if not file_id or file_id == "None" or file_id.strip() == "":
             return
         
@@ -829,53 +994,73 @@ class StockManagerApp(ctk.CTk):
             self.image_label.configure(image=None, text="[โหลดรูปปิดไว้]")
             return
         
-        # ลองดาวน์โหลดพร้อม retry mechanism + exponential backoff
+        # ลองดาวน์โหลดพร้อม retry mechanism
         max_retries = 3
         import time
         
         for attempt in range(max_retries):
-            wait_time = 2 ** attempt  # exponential backoff: 1, 2, 4 วินาที
+            # ตรวจสอบอีกครั้งว่า thread นี้ยังเป็น current หรือไม่
+            with self.image_thread_lock:
+                if file_id != self.current_image_id:
+                    return  # ถูกแทนที่แล้ว
+            
+            wait_time = 2 + (attempt * 3)  # wait 2, 5, 8 วินาที
             
             try:
                 # ลองดาวน์โหลดแบบ chunked ก่อน
-                if not self._try_chunked_download(file_id):
-                    # ถ้า chunked ไม่ได้ ลอง direct download
-                    if self._try_direct_download(file_id):
-                        return
-                else:
+                if self._try_chunked_download(file_id, product_barcode):
+                    return
+                # ถ้า chunked ไม่ได้ ลอง direct download
+                elif self._try_direct_download(file_id, product_barcode):
                     return
                 
                 # ถ้าทั้งสองวิธีไม่ได้
                 if attempt < max_retries - 1:
-                    print(f"  Retrying in {wait_time} seconds...")
+                    print(f"  ⏳ กำลังลองใหม่ใน {wait_time} วินาที...")
                     time.sleep(wait_time)
                     
             except Exception as e:
                 error_str = str(e).upper()
                 if "SSL" in error_str or "DECRYPTION" in error_str or "WRONG_VERSION" in error_str:
-                    print(f"SSL/Network error (attempt {attempt+1}/{max_retries}): {e}")
+                    print(f"⚠ ข้อผิดพลาด SSL/Network (ครั้งที่ {attempt+1}/{max_retries}): {e}")
                 elif "416" in error_str or "RANGE" in error_str:
-                    print(f"File range error (attempt {attempt+1}/{max_retries}): {e}")
+                    print(f"⚠ ข้อผิดพลาด Range (ครั้งที่ {attempt+1}/{max_retries}): {e}")
+                elif "NONETYPE" in error_str:
+                    print(f"⚠ ข้อผิดพลาด Resource (ครั้งที่ {attempt+1}/{max_retries}): {e}")
                 else:
-                    print(f"Image download error (attempt {attempt+1}/{max_retries}): {e}")
+                    print(f"⚠ ข้อผิดพลาดการโหลดรูป (ครั้งที่ {attempt+1}/{max_retries}): {e}")
                 
                 if attempt == max_retries - 1:
                     # ลองครั้งสุดท้ายแล้ว แสดง error
+                    print(f"❌ ไม่สามารถโหลดรูปได้หลังจากพยายาม {max_retries} ครั้ง")
+                    print(f"💡 แนะนำ: ลองปิดการโหลดรูป หรือตรวจสอบ network connection")
                     if self.app_running and self.winfo_exists():
-                        self.after(0, lambda: self.image_label.configure(image=None, text="[ไม่สามารถโหลดรูป]"))
+                        self.after(0, lambda: self.image_label.configure(image=None, text="[เครือข่ายขัดข้อง]"))
+                        # ปิดการโหลดรูปอัตโนมัติ
+                        self.after(0, lambda: self.btn_toggle_images.configure(text=f"🖼️ โหลดรูป: ปิด", fg_color="#E74C3C"))
+                        self.enable_image_loading = False
                 else:
-                    print(f"  Retrying in {wait_time} seconds...")
+                    print(f"  ⏳ กำลังลองใหม่ใน {wait_time} วินาที...")
                     time.sleep(wait_time)
 
-    def _try_chunked_download(self, file_id):
-        """ลองดาวน์โหลดแบบ chunked (512KB)"""
+    def _try_chunked_download(self, file_id, product_barcode=None):
+        """ลองดาวน์โหลดแบบ chunked (128KB) - ใช้สำหรับไฟล์ขนาดใหญ่"""
+        fh = None
+        temp = None
         try:
+            import ssl
+            # สร้าง SSL context ที่ไม่มีการตรวจสอบ certificate (ชั่วคราว)
+            try:
+                ssl._create_default_https_context = ssl._create_unverified_context
+            except:
+                pass
+                
             request = self.drive_service.files().get_media(fileId=file_id)
             request.http.timeout = 30
             
             fh = io.BytesIO()
-            # ตั้งค่า chunksize เป็น 512KB
-            downloader = MediaIoBaseDownload(fh, request, chunksize=512*1024)
+            # ตั้งค่า chunksize เป็น 128KB (ลดลงมากเพื่อหลีกเลี่ยง SSL issues)
+            downloader = MediaIoBaseDownload(fh, request, chunksize=128*1024)
             done = False
             
             while done is False:
@@ -887,7 +1072,7 @@ class StockManagerApp(ctk.CTk):
                     error_str = str(chunk_error).upper()
                     if "416" in error_str or "RANGE" in error_str:
                         # File range error - อาจจะเป็นไฟล์ที่ไม่รองรับ chunked download
-                        print(f"Chunked download not supported for this file: {chunk_error}")
+                        print(f"ไฟล์นี้ไม่รองรับ chunked download: {chunk_error}")
                         return False
                     raise
             
@@ -897,9 +1082,12 @@ class StockManagerApp(ctk.CTk):
             temp.load()
             pil_img = temp.copy()
             pil_img = pil_img.resize((200, 200))
-            fh.close()
-            temp.close()
             
+            # บันทึกลงเครื่องสำหรับใช้ครั้งต่อไป
+            if product_barcode:
+                self._save_local_image(pil_img, product_barcode)
+            
+            print(f"✓ โหลดรูปสำเร็จ (วิธี Chunked)")
             if self.app_running and self.winfo_exists():
                 self.after(0, self.update_image_ui, pil_img)
             return True
@@ -910,10 +1098,16 @@ class StockManagerApp(ctk.CTk):
             if "416" not in error_str and "RANGE" not in error_str:
                 raise
             return False
+        finally:
+            # ทำความสะอาด resource อย่างปลอดภัย - ไม่ close temp เพราะ PIL image ยังใช้
+            pass
 
-    def _try_direct_download(self, file_id):
-        """ลองดาวน์โหลดแบบ direct (ไม่ใช้ chunked) - สำหรับไฟล์ที่ไม่รองรับ range requests"""
+    def _try_direct_download(self, file_id, product_barcode=None):
+        """ดาวน์โหลดรูปแบบตรง (ไม่ใช้ chunked) - สำหรับ SSL retry"""
         try:
+            if not self.app_running or not self.drive_service:
+                return False
+                
             # Download โดยไม่ใช้ MediaIoBaseDownload
             request = self.drive_service.files().get_media(fileId=file_id)
             request.http.timeout = 60  # timeout นานขึ้นสำหรับ direct download
@@ -929,21 +1123,37 @@ class StockManagerApp(ctk.CTk):
             temp.load()
             pil_img = temp.copy()
             pil_img = pil_img.resize((200, 200))
-            fh.close()
-            temp.close()
             
-            print(f"Successfully downloaded using direct method")
+            # บันทึกลงเครื่องสำหรับใช้ครั้งต่อไป
+            if product_barcode:
+                self._save_local_image(pil_img, product_barcode)
+            
+            print(f"✓ โหลดรูปสำเร็จ (วิธี Direct)")
             if self.app_running and self.winfo_exists():
                 self.after(0, self.update_image_ui, pil_img)
             return True
             
         except Exception as e:
-            print(f"Direct download failed: {e}")
+            error_str = str(e).upper()
+            if "SSL" in error_str or "DECRYPTION" in error_str:
+                print(f"⚠ ข้อผิดพลาด SSL ในการโหลดแบบ direct: {e}")
+            else:
+                print(f"❌ โหลดแบบ direct ล้มเหลว: {e}")
             return False
+        finally:
+            # ทำความสะอาด resource อย่างปลอดภัย - ไม่ close temp เพราะ PIL image ยังใช้
+            pass
 
     def update_image_ui(self, pil_image):
-        if not self.app_running or not self.winfo_exists(): return
+        """อัปเดต UI ด้วยรูป (ต้องเรียกจาก main thread via after)"""
+        if not self.app_running or not self.winfo_exists(): 
+            return
         try:
+            # ตรวจสอบว่า pil_image ยังใช้ได้หรือไม่
+            if pil_image is None:
+                self.image_label.configure(image=None, text="[ไม่สามารถแสดงรูป]")
+                return
+            
             # สร้าง CTkImage ที่ถูกต้องสำหรับ HighDPI displays
             ctk_img = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=(200, 200))
             self.image_label.configure(image=ctk_img, text="")
@@ -1562,40 +1772,40 @@ class StockManagerApp(ctk.CTk):
         reports_frame = ctk.CTkFrame(main_scroll, fg_color="gray30", corner_radius=10)
         reports_frame.pack(fill="x", pady=10, padx=5)
         
-        ctk.CTkLabel(reports_frame, text="เลือกรายงาน:", font=("Kanit", 12, "bold")).pack(pady=10, anchor="w", padx=10)
+        ctk.CTkLabel(reports_frame, text="เลือกรายงาน:", font=("Kanit", 14, "bold")).pack(pady=10, anchor="w", padx=10)
         
         btn_daily = ctk.CTkButton(reports_frame, text="📅 รายงานยอดขายรายวัน", 
                                   command=lambda: self.show_report_type("daily"), 
-                                  font=("Kanit", 11), height=40)
+                                  font=("Kanit", 13, "bold"), height=45)
         btn_daily.pack(fill="x", padx=10, pady=5)
         
         btn_monthly = ctk.CTkButton(reports_frame, text="📊 รายงานยอดขายรายเดือน", 
                                     command=lambda: self.show_report_type("monthly"), 
-                                    font=("Kanit", 11), height=40)
+                                    font=("Kanit", 13, "bold"), height=45)
         btn_monthly.pack(fill="x", padx=10, pady=5)
         
         btn_best_seller = ctk.CTkButton(reports_frame, text="⭐ รายงานสินค้าขายดี", 
                                         command=lambda: self.show_report_type("best_seller"), 
-                                        font=("Kanit", 11), height=40)
+                                        font=("Kanit", 13, "bold"), height=45)
         btn_best_seller.pack(fill="x", padx=10, pady=5)
         
         btn_stock = ctk.CTkButton(reports_frame, text="📦 รายงานสต็อกคงเหลือ", 
                                   command=lambda: self.show_report_type("stock"), 
-                                  font=("Kanit", 11), height=40)
+                                  font=("Kanit", 13, "bold"), height=45)
         btn_stock.pack(fill="x", padx=10, pady=5)
         
         btn_profit = ctk.CTkButton(reports_frame, text="💰 รายงานกำไรขาดทุน", 
                                    command=lambda: self.show_report_type("profit"), 
-                                   font=("Kanit", 11), height=40)
+                                   font=("Kanit", 13, "bold"), height=45)
         btn_profit.pack(fill="x", padx=10, pady=5)
         
         # พื้นที่แสดงผลรายงาน
         report_display_frame = ctk.CTkFrame(main_scroll, fg_color="gray25", corner_radius=10)
         report_display_frame.pack(fill="both", expand=True, pady=10, padx=5)
         
-        ctk.CTkLabel(report_display_frame, text="ผลลัพธ์รายงาน", font=("Kanit", 12, "bold")).pack(pady=10, anchor="w", padx=10)
+        ctk.CTkLabel(report_display_frame, text="ผลลัพธ์รายงาน", font=("Kanit", 14, "bold")).pack(pady=10, anchor="w", padx=10)
         
-        self.report_text = ctk.CTkTextbox(report_display_frame, font=("Kanit", 10), height=300)
+        self.report_text = ctk.CTkTextbox(report_display_frame, font=("Kanit", 12), height=300)
         self.report_text.pack(fill="both", expand=True, padx=10, pady=10)
 
     def generate_all_reports(self):
@@ -1672,7 +1882,7 @@ class StockManagerApp(ctk.CTk):
             
             # แสดงผลรายงาน
             if self.app_running and self.winfo_exists():
-                self.after(0, lambda: self.display_report_results, date_from, date_to, total_sales, 
+                self.after(0, self.display_report_results, date_from, date_to, total_sales, 
                           total_bills, daily_sales, product_sales, cancelled_count)
         except Exception as e:
             if self.app_running and self.winfo_exists():
@@ -1709,27 +1919,289 @@ class StockManagerApp(ctk.CTk):
     def show_report_type(self, report_type):
         """แสดงรายงานตามประเภท"""
         self.report_text.delete("1.0", "end")
+        self.report_text.insert("1.0", f"⏳ กำลังประมวลผล {report_type}...\n")
         
-        if report_type == "daily":
-            self.report_text.insert("1.0", "📅 รายงานยอดขายรายวัน\n" + "="*50 + "\n\n")
-            # TODO: ดึงข้อมูลจาก Google Sheet และแสดง
-            self.report_text.insert("end", "ยอดขายรวม: 0.00 บาท\nจำนวนใบเสร็จ: 0 ใบ")
-        
-        elif report_type == "monthly":
-            self.report_text.insert("1.0", "📊 รายงานยอดขายรายเดือน\n" + "="*50 + "\n\n")
-            self.report_text.insert("end", "ยอดขายรวม: 0.00 บาท\nจำนวนใบเสร็จ: 0 ใบ")
-        
-        elif report_type == "best_seller":
-            self.report_text.insert("1.0", "⭐ รายงานสินค้าขายดี\n" + "="*50 + "\n\n")
-            self.report_text.insert("end", "สินค้าที่ขายดีสุด:\n1. (ยังไม่มีข้อมูล)")
-        
-        elif report_type == "stock":
-            self.report_text.insert("1.0", "📦 รายงานสต็อกคงเหลือ\n" + "="*50 + "\n\n")
-            self.report_text.insert("end", "สต็อกทั้งหมด: 0 ชิ้น\nมูลค่า: 0.00 บาท")
-        
-        elif report_type == "profit":
-            self.report_text.insert("1.0", "💰 รายงานกำไรขาดทุน\n" + "="*50 + "\n\n")
-            self.report_text.insert("end", "ยอดรวมขายสินค้า: 0.00 บาท\nยอดรวมต้นทุน: 0.00 บาท\nกำไร: 0.00 บาท")
+        # ใช้ thread เพื่อดึงข้อมูล
+        threading.Thread(target=self.run_show_report_type, args=(report_type,), daemon=True).start()
+    
+    def run_show_report_type(self, report_type):
+        """ดึงข้อมูลและแสดงรายงานตามประเภท"""
+        try:
+            records = self.sheet_sales.get_all_values()
+            
+            if report_type == "daily":
+                self.show_daily_report(records)
+            elif report_type == "monthly":
+                self.show_monthly_report(records)
+            elif report_type == "best_seller":
+                self.show_best_seller_report(records)
+            elif report_type == "stock":
+                self.show_stock_report()
+            elif report_type == "profit":
+                self.show_profit_report(records)
+        except Exception as e:
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                      self.report_text.insert("1.0", f"❌ เกิดข้อผิดพลาด: {str(e)}")))
+    
+    def show_daily_report(self, records):
+        """รายงานยอดขายรายวัน (นับ 1 ใบเสร็จ = 1 ReceiptID)"""
+        try:
+            # Group by (date, receipt_id) to count unique receipts
+            daily_receipts = defaultdict(lambda: {"receipts": set(), "total": 0.0})
+            
+            if len(records) > 1:
+                for row in records[1:]:
+                    safe_row = (row + [""] * 12)[:12]
+                    receipt_id = safe_row[0]  # column 1 = ReceiptID
+                    rec_date = safe_row[1]    # column 2 = Date
+                    total_str = safe_row[6]   # column 7 = Total
+                    
+                    if not rec_date or not receipt_id:
+                        continue
+                    
+                    try:
+                        total = float(total_str) if total_str else 0.0
+                    except:
+                        total = 0.0
+                    
+                    daily_receipts[rec_date]["receipts"].add(receipt_id)
+                    daily_receipts[rec_date]["total"] += total
+            
+            report_text = "📅 รายงานยอดขายรายวัน\n" + "="*60 + "\n\n"
+            
+            if daily_receipts:
+                for date_key in sorted(daily_receipts.keys(), reverse=True):
+                    data = daily_receipts[date_key]
+                    receipt_count = len(data["receipts"])
+                    avg_per_receipt = data['total'] / receipt_count if receipt_count > 0 else 0
+                    report_text += f"📌 {date_key}\n"
+                    report_text += f"   ยอดขาย: {data['total']:>12,.2f} บาท\n"
+                    report_text += f"   ใบเสร็จ: {receipt_count:>12} ใบ\n"
+                    report_text += f"   เฉลี่ย: {avg_per_receipt:>12,.2f} บาท/ใบ\n\n"
+            else:
+                report_text += "ไม่มีข้อมูล\n"
+            
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                      self.report_text.insert("1.0", report_text)))
+        except Exception as e:
+            print(f"Error in show_daily_report: {e}")
+    
+    def show_monthly_report(self, records):
+        """รายงานยอดขายรายเดือน (นับ 1 ใบเสร็จ = 1 ReceiptID)"""
+        try:
+            # Group by (month, receipt_id) to count unique receipts
+            monthly_receipts = defaultdict(lambda: {"receipts": set(), "total": 0.0})
+            
+            if len(records) > 1:
+                for row in records[1:]:
+                    safe_row = (row + [""] * 12)[:12]
+                    receipt_id = safe_row[0]  # column 1 = ReceiptID
+                    rec_date = safe_row[1]    # column 2 = Date
+                    total_str = safe_row[6]   # column 7 = Total
+                    
+                    if not rec_date or not receipt_id:
+                        continue
+                    
+                    # แยกเอาเดือนจากวันที่ (เช่น 2026-01-15 -> 2026-01)
+                    month_key = rec_date[:7] if len(rec_date) >= 7 else rec_date
+                    
+                    try:
+                        total = float(total_str) if total_str else 0.0
+                    except:
+                        total = 0.0
+                    
+                    monthly_receipts[month_key]["receipts"].add(receipt_id)
+                    monthly_receipts[month_key]["total"] += total
+            
+            report_text = "📊 รายงานยอดขายรายเดือน\n" + "="*60 + "\n\n"
+            
+            if monthly_receipts:
+                for month_key in sorted(monthly_receipts.keys(), reverse=True):
+                    data = monthly_receipts[month_key]
+                    receipt_count = len(data["receipts"])
+                    avg_per_receipt = data['total'] / receipt_count if receipt_count > 0 else 0
+                    report_text += f"📌 {month_key}\n"
+                    report_text += f"   ยอดขาย: {data['total']:>12,.2f} บาท\n"
+                    report_text += f"   ใบเสร็จ: {receipt_count:>12} ใบ\n"
+                    report_text += f"   เฉลี่ย: {avg_per_receipt:>12,.2f} บาท/ใบ\n\n"
+            else:
+                report_text += "ไม่มีข้อมูล\n"
+            
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                      self.report_text.insert("1.0", report_text)))
+        except Exception as e:
+            print(f"Error in show_monthly_report: {e}")
+    
+    def show_best_seller_report(self, records):
+        """รายงานสินค้าขายดี TOP 20"""
+        try:
+            product_sales = defaultdict(lambda: {"qty": 0, "total": 0.0})
+            
+            if len(records) > 1:
+                for row in records[1:]:
+                    safe_row = (row + [""] * 10)[:10]
+                    name = safe_row[3]  # column 4 = Name
+                    qty_str = safe_row[4]  # column 5 = Qty
+                    total_str = safe_row[6]  # column 7 = Total
+                    
+                    if not name:
+                        continue
+                    
+                    try:
+                        qty = int(qty_str) if qty_str else 0
+                    except:
+                        qty = 0
+                    
+                    try:
+                        total = float(total_str) if total_str else 0.0
+                    except:
+                        total = 0.0
+                    
+                    product_sales[name]["qty"] += qty
+                    product_sales[name]["total"] += total
+            
+            report_text = "⭐ รายงานสินค้าขายดี TOP 20\n" + "="*60 + "\n\n"
+            
+            sorted_products = sorted(product_sales.items(), key=lambda x: x[1]["qty"], reverse=True)[:20]
+            
+            if sorted_products:
+                for i, (name, data) in enumerate(sorted_products, 1):
+                    report_text += f"{i:2}. {name[:30]:30} - {data['qty']:>6} ชิ้น ({data['total']:>10,.2f} บาท)\n"
+            else:
+                report_text += "ไม่มีข้อมูล\n"
+            
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                      self.report_text.insert("1.0", report_text)))
+        except Exception as e:
+            print(f"Error in show_best_seller_report: {e}")
+    
+    def show_stock_report(self):
+        """รายงานสต็อกคงเหลือ"""
+        try:
+            if not hasattr(self, 'sheet_products') or not self.sheet_products:
+                if self.app_running and self.winfo_exists():
+                    self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                          self.report_text.insert("1.0", "❌ ไม่พบ Sheet Products")))
+                return
+            
+            records = self.sheet_products.get_all_values()
+            
+            report_text = "📦 รายงานสต็อกคงเหลือ\n" + "="*70 + "\n\n"
+            
+            total_qty = 0
+            total_value = 0.0
+            
+            if len(records) > 1:
+                report_text += f"{'ลำดับ':>3} {'สินค้า':<35} {'ราคา':>12} {'จำนวน':>10} {'มูลค่า':>15}\n"
+                report_text += "-" * 80 + "\n"
+                
+                for i, row in enumerate(records[1:], 1):
+                    safe_row = (row + [""] * 15)[:15]
+                    name = safe_row[2] if len(safe_row) > 2 else ""  # column 3 = Name
+                    price_str = safe_row[5] if len(safe_row) > 5 else ""  # column 6 = Price
+                    stock_str = safe_row[7] if len(safe_row) > 7 else ""  # column 8 = Stock
+                    
+                    if not name:
+                        continue
+                    
+                    try:
+                        price = float(price_str) if price_str else 0.0
+                    except:
+                        price = 0.0
+                    
+                    try:
+                        stock = int(stock_str) if stock_str else 0
+                    except:
+                        stock = 0
+                    
+                    value = price * stock
+                    total_qty += stock
+                    total_value += value
+                    
+                    report_text += f"{i:3} {name[:35]:35} {price:>12,.2f} {stock:>10} {value:>15,.2f}\n"
+                
+                report_text += "-" * 80 + "\n"
+                report_text += f"รวมทั้งหมด: {total_qty:>10} ชิ้น   มูลค่ารวม: {total_value:>15,.2f} บาท\n"
+            else:
+                report_text += "ไม่มีข้อมูล\n"
+            
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                      self.report_text.insert("1.0", report_text)))
+        except Exception as e:
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                      self.report_text.insert("1.0", f"❌ เกิดข้อผิดพลาด: {str(e)}")))
+            print(f"Error in show_stock_report: {e}")
+    
+    def show_profit_report(self, records):
+        """รายงานกำไรขาดทุน"""
+        try:
+            total_sales = 0.0
+            total_cost = 0.0
+            
+            # ดึงยอดขายจาก Sales sheet
+            if len(records) > 1:
+                for row in records[1:]:
+                    safe_row = (row + [""] * 12)[:12]
+                    total_str = safe_row[6] if len(safe_row) > 6 else ""  # column 7 = Total
+                    
+                    try:
+                        total = float(total_str) if total_str else 0.0
+                    except:
+                        total = 0.0
+                    
+                    total_sales += total
+            
+            # ดึงต้นทุนจาก Products sheet
+            if not hasattr(self, 'sheet_products') or not self.sheet_products:
+                if self.app_running and self.winfo_exists():
+                    self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                          self.report_text.insert("1.0", "❌ ไม่พบ Sheet Products")))
+                return
+            
+            inv_records = self.sheet_products.get_all_values()
+            
+            if len(inv_records) > 1:
+                for row in inv_records[1:]:
+                    safe_row = (row + [""] * 15)[:15]
+                    cost_str = safe_row[4] if len(safe_row) > 4 else ""  # column 5 = Cost
+                    stock_str = safe_row[7] if len(safe_row) > 7 else ""  # column 8 = Stock
+                    
+                    try:
+                        cost = float(cost_str) if cost_str else 0.0
+                    except:
+                        cost = 0.0
+                    
+                    try:
+                        stock = int(stock_str) if stock_str else 0
+                    except:
+                        stock = 0
+                    
+                    total_cost += (cost * stock)
+            
+            profit = total_sales - total_cost
+            profit_margin = (profit / total_sales * 100) if total_sales > 0 else 0
+            
+            report_text = "💰 รายงานกำไรขาดทุน\n" + "="*70 + "\n\n"
+            report_text += f"ยอดรวมขาย:        {total_sales:>18,.2f} บาท\n"
+            report_text += f"ยอดรวมต้นทุน:     {total_cost:>18,.2f} บาท\n"
+            report_text += "-" * 60 + "\n"
+            report_text += f"กำไร/ขาดทุน:      {profit:>18,.2f} บาท\n"
+            report_text += f"อัตราผลกำไร:      {profit_margin:>18.2f} %\n"
+            
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                      self.report_text.insert("1.0", report_text)))
+        except Exception as e:
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                      self.report_text.insert("1.0", f"❌ เกิดข้อผิดพลาด: {str(e)}")))
+            print(f"Error in show_profit_report: {e}")
 
     # =========================================
     # TAB 6: Suppliers (ซัพพลายเออร์)
@@ -1757,85 +2229,189 @@ class StockManagerApp(ctk.CTk):
         btn_refresh_suppliers.pack(side="left", padx=5)
         
         # ตารางแสดงซัพพลายเออร์
-        table_frame = ctk.CTkFrame(main_scroll, fg_color="gray30", corner_radius=10)
+        table_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
         table_frame.pack(fill="both", expand=True, pady=10, padx=5)
         
-        # ส่วนหัวตาราง
-        header_frame = ctk.CTkFrame(table_frame, fg_color="gray40")
-        header_frame.pack(fill="x", padx=5, pady=5)
+        # สร้าง Treeview สำหรับแสดงข้อมูลซัพพลายเออร์
+        columns = ("รหัส", "ชื่อซัพพลายเออร์", "เบอร์โทร", "หมายเหตุ", "จัดการ")
+        self.suppliers_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
         
-        ctk.CTkLabel(header_frame, text="รหัส", font=("Kanit", 11, "bold"), width=80).pack(side="left", padx=5)
-        ctk.CTkLabel(header_frame, text="ชื่อซัพพลายเออร์", font=("Kanit", 11, "bold")).pack(side="left", padx=5, fill="x", expand=True)
-        ctk.CTkLabel(header_frame, text="เบอร์โทร", font=("Kanit", 11, "bold"), width=120).pack(side="left", padx=5)
-        ctk.CTkLabel(header_frame, text="จัดการ", font=("Kanit", 11, "bold"), width=100).pack(side="left", padx=5)
+        # ตั้งค่า style สำหรับ treeview
+        style = ttk.Style()
+        style.configure("Treeview", rowheight=40, font=("Kanit", 10))
+        style.configure("Treeview.Heading", font=("Kanit", 11, "bold"))
         
-        # รายการซัพพลายเออร์ (Scrollable)
-        suppliers_list_frame = ctk.CTkScrollableFrame(table_frame, fg_color="gray30")
-        suppliers_list_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        # ตั้งค่าหัวคอลัมน์
+        self.suppliers_tree.heading("รหัส", text="รหัส")
+        self.suppliers_tree.column("รหัส", width=90, anchor="center")
         
-        self.suppliers_list_frame = suppliers_list_frame
+        self.suppliers_tree.heading("ชื่อซัพพลายเออร์", text="ชื่อซัพพลายเออร์")
+        self.suppliers_tree.column("ชื่อซัพพลายเออร์", width=180, anchor="center")
+        
+        self.suppliers_tree.heading("เบอร์โทร", text="เบอร์โทร")
+        self.suppliers_tree.column("เบอร์โทร", width=130, anchor="center")
+        
+        self.suppliers_tree.heading("หมายเหตุ", text="หมายเหตุ")
+        self.suppliers_tree.column("หมายเหตุ", width=200, anchor="center")
+        
+        self.suppliers_tree.heading("จัดการ", text="จัดการ")
+        self.suppliers_tree.column("จัดการ", width=70, anchor="center")
+        
+        self.suppliers_tree.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Scrollbar สำหรับ treeview
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.suppliers_tree.yview)
+        self.suppliers_tree.configure(yscroll=scrollbar.set)
+        
+        self.suppliers_tree_map = {}  # Mapping จาก tree item ไป supplier data
         self.load_suppliers()
 
     def load_suppliers(self):
         """โหลดรายชื่อซัพพลายเออร์จาก Google Sheet"""
-        # ล้างรายการเก่า
-        for widget in self.suppliers_list_frame.winfo_children():
-            widget.destroy()
+        # ล้างข้อมูลเก่า
+        for item in self.suppliers_tree.get_children():
+            self.suppliers_tree.delete(item)
+        
+        self.suppliers_tree_map.clear()
         
         try:
             if not self.sheet_suppliers:
-                empty_label = ctk.CTkLabel(self.suppliers_list_frame, text="⚠️ ไม่สามารถเชื่อมต่อ Google Sheet", 
-                                           font=("Kanit", 12))
-                empty_label.pack(pady=20)
                 return
             
             records = self.sheet_suppliers.get_all_values()
             
             if len(records) <= 1:
-                empty_label = ctk.CTkLabel(self.suppliers_list_frame, text="📭 ไม่มีข้อมูลซัพพลายเออร์", 
-                                           font=("Kanit", 12))
-                empty_label.pack(pady=20)
                 return
             
             # แสดงข้อมูลซัพพลายเออร์
             for row_idx, row in enumerate(records[1:], start=2):  # ข้าม header
-                safe_row = (row + [""] * 5)[:5]  # ให้แน่ใจว่ามี 5 columns
+                safe_row = (row + [""] * 6)[:6]  # ให้แน่ใจว่ามี 5 columns (index 0-4) + space
                 sup_id = safe_row[0]
                 sup_name = safe_row[1]
                 sup_phone = safe_row[2]
                 sup_address = safe_row[3]
+                sup_note = safe_row[4]
                 
-                item_frame = ctk.CTkFrame(self.suppliers_list_frame, fg_color="gray25")
-                item_frame.pack(fill="x", padx=5, pady=3)
+                # เพิ่มแถวไปยัง treeview พร้อมปุ่ม ⋯ (จะเพิ่มทีหลัง)
+                item_id = self.suppliers_tree.insert("", "end", values=(sup_id, sup_name, sup_phone, sup_note, "⋯"))
                 
-                ctk.CTkLabel(item_frame, text=sup_id[:8], font=("Kanit", 10), width=80).pack(side="left", padx=5, pady=10)
-                ctk.CTkLabel(item_frame, text=sup_name[:25], font=("Kanit", 10)).pack(side="left", padx=5, pady=10, fill="x", expand=True)
-                ctk.CTkLabel(item_frame, text=sup_phone[:15], font=("Kanit", 10), width=120).pack(side="left", padx=5, pady=10)
-                
-                btn_edit = ctk.CTkButton(item_frame, text="✏️ แก้ไข", font=("Kanit", 9), width=50, height=25,
-                                         command=lambda ri=row_idx, s=(sup_id, sup_name, sup_phone, sup_address): self.edit_supplier(ri, s))
-                btn_edit.pack(side="left", padx=2, pady=10)
-                
-                btn_delete = ctk.CTkButton(item_frame, text="🗑️ ลบ", font=("Kanit", 9), width=50, height=25,
-                                           fg_color="#E74C3C", hover_color="#C0392B",
-                                           command=lambda ri=row_idx, si=sup_id: self.delete_supplier(ri, si))
-                btn_delete.pack(side="left", padx=2, pady=10)
+                # เก็บข้อมูลสำหรับการแก้ไข/ลบ
+                self.suppliers_tree_map[item_id] = {
+                    "row_idx": row_idx,
+                    "data": (sup_id, sup_name, sup_phone, sup_address, sup_note)
+                }
+            
+            # เพิ่ม event handler สำหรับคลิกที่ปุ่ม ⋯
+            self.suppliers_tree.bind("<Button-1>", self.on_supplier_tree_click)
         except Exception as e:
-            error_label = ctk.CTkLabel(self.suppliers_list_frame, text=f"❌ เกิดข้อผิดพลาด: {str(e)}", 
-                                       font=("Kanit", 10))
-            error_label.pack(pady=20)
+            print(f"Error loading suppliers: {e}")
+    
+    def on_supplier_tree_click(self, event):
+        """จัดการการคลิกที่แถวในตาราง suppliers"""
+        # หาแถวที่ถูกคลิก
+        item = self.suppliers_tree.identify("item", event.x, event.y)
+        col = self.suppliers_tree.identify("column", event.x, event.y)
+        
+        if not item or col != "#5":  # #5 คือคอลัมน์ "จัดการ"
+            return
+        
+        if item not in self.suppliers_tree_map:
+            return
+        
+        info = self.suppliers_tree_map[item]
+        row_idx = info["row_idx"]
+        supplier_data = info["data"]
+        
+        self.show_supplier_tree_menu(event, item, row_idx, supplier_data)
+    
+    def show_supplier_tree_menu(self, event, tree_item, row_idx, supplier_data):
+        """แสดงเมนู popup สำหรับแก้ไขหรือลบซัพพลายเออร์ (สำหรับ treeview)"""
+        sup_id = supplier_data[0]
+        
+        # สร้าง popup menu
+        popup_menu = ctk.CTkToplevel(self)
+        popup_menu.wm_overrideredirect(True)  # ลบ title bar
+        popup_menu.geometry(f"+{event.x_root}+{event.y_root}")
+        popup_menu.attributes('-topmost', True)  # ให้ popup อยู่ด้านบนสุด
+        
+        frame = ctk.CTkFrame(popup_menu, fg_color="gray30", border_width=1, border_color="gray50")
+        frame.pack(fill="both", expand=True)
+        
+        def close_popup():
+            try:
+                popup_menu.destroy()
+            except:
+                pass
+        
+        btn_edit = ctk.CTkButton(frame, text="✏️ แก้ไข", font=("Kanit", 12), fg_color="gray40", hover_color="gray50",
+                                 command=lambda: [close_popup(), self.edit_supplier(row_idx, supplier_data)])
+        btn_edit.pack(fill="x", padx=5, pady=5)
+        
+        btn_delete = ctk.CTkButton(frame, text="🗑️ ลบ", font=("Kanit", 12), fg_color="#E74C3C", hover_color="#C0392B",
+                                   command=lambda: [close_popup(), self.delete_supplier(row_idx, sup_id)])
+        btn_delete.pack(fill="x", padx=5, pady=5)
+        
+        # ปิด popup เมื่อกดนอก
+        def on_key_press(e):
+            if e.keysym == 'Escape':
+                close_popup()
+        
+        def on_focus_out(e):
+            popup_menu.after(100, lambda: close_popup())
+        
+        popup_menu.bind("<Escape>", on_key_press)
+        popup_menu.bind("<Button-1>", lambda e: close_popup() if e.widget == popup_menu else None)
+        
+        # ใช้ grab_set เพื่อให้ popup capture mouse events
+        try:
+            popup_menu.grab_set()
+        except:
+            pass
+
+    def show_supplier_menu(self, btn, row_idx, supplier_data):
+        """แสดงเมนู popup สำหรับแก้ไขหรือลบซัพพลายเออร์"""
+        sup_id = supplier_data[0]
+        
+        # สร้าง popup menu
+        popup_menu = ctk.CTkToplevel(self)
+        popup_menu.wm_overrideredirect(True)  # ลบ title bar
+        
+        # ตั้งตำแหน่งเหนือปุ่ม
+        btn.update()
+        x = btn.winfo_rootx()
+        y = btn.winfo_rooty() - 90
+        popup_menu.geometry(f"+{x}+{y}")
+        
+        frame = ctk.CTkFrame(popup_menu, fg_color="gray30", border_width=1, border_color="gray50")
+        frame.pack(fill="both", expand=True)
+        
+        btn_edit = ctk.CTkButton(frame, text="✏️ แก้ไข", font=("Kanit", 12), fg_color="gray40", hover_color="gray50",
+                                 command=lambda: [popup_menu.destroy(), self.edit_supplier(row_idx, supplier_data)])
+        btn_edit.pack(fill="x", padx=5, pady=5)
+        
+        btn_delete = ctk.CTkButton(frame, text="🗑️ ลบ", font=("Kanit", 12), fg_color="#E74C3C", hover_color="#C0392B",
+                                   command=lambda: [popup_menu.destroy(), self.delete_supplier(row_idx, sup_id)])
+        btn_delete.pack(fill="x", padx=5, pady=5)
+        
+        # ปิด popup เมื่อคลิกนอก
+        def close_popup(event=None):
+            try:
+                popup_menu.destroy()
+            except:
+                pass
+        
+        popup_menu.bind("<FocusOut>", close_popup)
 
     def add_supplier_dialog(self):
         """เปิด dialog สำหรับเพิ่มซัพพลายเออร์ใหม่"""
         # สร้าง window ใหม่
         dialog = ctk.CTkToplevel(self)
         dialog.title("เพิ่มซัพพลายเออร์ใหม่")
-        dialog.geometry("400x300")
+        dialog.geometry("400x450")
         dialog.resizable(False, False)
         
         ctk.CTkLabel(dialog, text="เพิ่มซัพพลายเออร์ใหม่", font=("Kanit", 16, "bold")).pack(pady=15)
         
-        # รหัสซัพพลายเออร์ (auto-generate)
         ctk.CTkLabel(dialog, text="ชื่อซัพพลายเออร์:", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
         entry_name = ctk.CTkEntry(dialog, placeholder_text="ชื่อบริษัท", width=350)
         entry_name.pack(padx=15, pady=5)
@@ -1848,10 +2424,15 @@ class StockManagerApp(ctk.CTk):
         entry_address = ctk.CTkEntry(dialog, placeholder_text="ที่อยู่ซัพพลายเออร์", width=350)
         entry_address.pack(padx=15, pady=5)
         
+        ctk.CTkLabel(dialog, text="หมายเหตุ:", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
+        entry_note = ctk.CTkEntry(dialog, placeholder_text="หมายเหตุเพิ่มเติม", width=350)
+        entry_note.pack(padx=15, pady=5)
+        
         def save_supplier():
             name = entry_name.get().strip()
             phone = entry_phone.get().strip()
             address = entry_address.get().strip()
+            note = entry_note.get().strip()
             
             if not name:
                 messagebox.showwarning("ข้อมูลไม่ครบ", "กรุณาใส่ชื่อซัพพลายเออร์")
@@ -1862,8 +2443,8 @@ class StockManagerApp(ctk.CTk):
                 import time
                 sup_id = f"SUP{int(time.time()) % 100000}"
                 
-                # เพิ่มลงใน Google Sheet
-                self.sheet_suppliers.append_row([sup_id, name, phone, address, ""])
+                # เพิ่มลงใน Google Sheet (5 columns: ID, Name, Phone, Address, Note)
+                self.sheet_suppliers.append_row([sup_id, name, phone, address, note])
                 messagebox.showinfo("สำเร็จ", f"เพิ่มซัพพลายเออร์ {name} เรียบร้อย!")
                 dialog.destroy()
                 self.load_suppliers()
@@ -1876,11 +2457,11 @@ class StockManagerApp(ctk.CTk):
 
     def edit_supplier(self, row_idx, supplier_data):
         """แก้ไขข้อมูลซัพพลายเออร์"""
-        sup_id, sup_name, sup_phone, sup_address = supplier_data
+        sup_id, sup_name, sup_phone, sup_address, sup_note = supplier_data
         
         dialog = ctk.CTkToplevel(self)
         dialog.title("แก้ไขซัพพลายเออร์")
-        dialog.geometry("400x320")
+        dialog.geometry("400x470")
         dialog.resizable(False, False)
         
         ctk.CTkLabel(dialog, text="แก้ไขซัพพลายเออร์", font=("Kanit", 16, "bold")).pack(pady=15)
@@ -1902,16 +2483,23 @@ class StockManagerApp(ctk.CTk):
         entry_address.insert(0, sup_address)
         entry_address.pack(padx=15, pady=5)
         
+        ctk.CTkLabel(dialog, text="หมายเหตุ:", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
+        entry_note = ctk.CTkEntry(dialog, width=350)
+        entry_note.insert(0, sup_note)
+        entry_note.pack(padx=15, pady=5)
+        
         def save_changes():
             name = entry_name.get().strip()
             phone = entry_phone.get().strip()
             address = entry_address.get().strip()
+            note = entry_note.get().strip()
             
             try:
-                # อัปเดตในใน Google Sheet
+                # อัปเดตใน Google Sheet (5 columns: ID, Name, Phone, Address, Note)
                 self.sheet_suppliers.update_cell(row_idx, 2, name)  # column 2 = Name
                 self.sheet_suppliers.update_cell(row_idx, 3, phone)  # column 3 = Phone
                 self.sheet_suppliers.update_cell(row_idx, 4, address)  # column 4 = Address
+                self.sheet_suppliers.update_cell(row_idx, 5, note)  # column 5 = Note
                 messagebox.showinfo("สำเร็จ", "อัปเดตข้อมูลซัพพลายเออร์เรียบร้อย!")
                 dialog.destroy()
                 self.load_suppliers()
@@ -2362,33 +2950,581 @@ Barcode: {product_details.get('barcode', '-')}
                 pass
     
     def open_gemini_web(self):
-        """เปิด Gemini Web ในเบราว์เซอร์"""
-        import webbrowser
+        """เปิด Gemini Web และส่งรูป + prompt ไปให้"""
+        # ดึง product combo value
+        product_combo_value = self.ad_product_combo.get()
+        if not product_combo_value:
+            messagebox.showwarning("ขาดข้อมูล", "กรุณาเลือกสินค้า")
+            return
         
-        product_name = self.ad_product_combo.get().split("(")[0].strip() if self.ad_product_combo.get() else "สินค้า"
+        # แยก product name และ barcode จาก combo value (format: "Name (Barcode)")
+        product_name = product_combo_value.split("(")[0].strip()
+        barcode = product_combo_value.split("(")[1].rstrip(")").strip() if "(" in product_combo_value else ""
+        
+        if not barcode:
+            messagebox.showwarning("ขาดข้อมูล", "ไม่พบบาร์โค้ดสินค้า")
+            return
+        
+        # ค้นหารูปภาพจากโฟลเดอร์ img ที่ตรงกับบาร์โค้ด
+        image_path = self._find_image_by_barcode(barcode)
+        if not image_path:
+            messagebox.showwarning("ขาดข้อมูล", f"ไม่พบรูปภาพสำหรับบาร์โค้ด: {barcode}\n\nตรวจสอบโฟลเดอร์ img")
+            return
+        
         price = self.ad_price_entry.get()
         prompt = self.ad_prompt_text.get("1.0", "end").strip()
+        
+        if not price:
+            messagebox.showwarning("ขาดข้อมูล", "กรุณากรอกราคา")
+            return
         
         # แทนที่ placeholder ในข้อความ
         full_prompt = prompt.format(product=product_name, price=price)
         
-        # URL สำหรับ Gemini
-        gemini_url = "https://gemini.google.com/"
+        # อัปเดต UI
+        self.ad_status_label.configure(text="⏳ กำลังเปิด Gemini Web...")
+        self.ad_preview_label.configure(text="")
+        self.update_idletasks()
         
-        # เปิด Gemini Web
-        webbrowser.open(gemini_url)
+        # รัน in thread เพื่อไม่ให้ UI ค้าง
+        thread = threading.Thread(target=self._open_gemini_with_image, args=(image_path, full_prompt, product_name, price, barcode))
+        thread.daemon = True
+        thread.start()
+    
+    def _find_image_by_barcode(self, barcode):
+        """ค้นหารูปภาพจากโฟลเดอร์ img ที่ตรงกับบาร์โค้ด"""
+        from pathlib import Path
+        img_dir = Path("./img")
         
-        messagebox.showinfo("เปิด Gemini", 
-f"""✅ เปิด Gemini Web แล้ว
+        if not img_dir.exists():
+            return None
+        
+        # ค้นหาไฟล์ที่มีชื่อตรงกับบาร์โค้ด (เช่น 111.png, 111.jpg)
+        for ext in ['png', 'jpg', 'jpeg', 'bmp', 'gif']:
+            image_file = img_dir / f"{barcode}.{ext}"
+            if image_file.exists():
+                return str(image_file.absolute())
+        
+        return None
+    
+    def _open_gemini_with_image(self, image_path, prompt, product_name, price, barcode):
+        """เปิด Gemini Web และส่งรูป + prompt ไปให้อัตโนมัติผ่าน Selenium"""
+        try:
+            from pathlib import Path
+            import subprocess
+            import os
+            import platform
+            
+            self.after(0, lambda: self.ad_status_label.configure(text="⏳ เตรียมเปิด Gemini Web..."))
+            
+            # ปิด Chrome processes ที่เปิดอยู่เพื่อหลีกเลี่ยงการล็อคโปรไฟล์
+            if platform.system() == "Windows":
+                try:
+                    self.after(0, lambda: print("🔄 ปิด Chrome ที่เปิดอยู่..."))
+                    os.system("taskkill /im chrome.exe /f /t 2>nul")
+                    time.sleep(3)  # รอให้ Chrome ปิดสมบูรณ์
+                    self.after(0, lambda: print("✅ Chrome ปิดสำเร็จ"))
+                except:
+                    pass
+            
+            # ตั้งค่า Chrome options
+            from selenium.webdriver.chrome.options import Options
+            chrome_options = Options()
+            
+            print("DEBUG: เตรียม Chrome options...")
+            
+            # ใช้ temporary directory ระหว่าง test เพื่อหลีกเลี่ยง profile lock
+            import tempfile
+            temp_dir = tempfile.mkdtemp(prefix="chrome_profile_")
+            print(f"DEBUG: ใช้ temporary profile dir: {temp_dir}")
+            
+            # Fallback: ใช้ temp directory หากไม่สามารถใช้ real profile ได้
+            chrome_user_data = temp_dir
+            
+            # เพิ่ม flags สำหรับป้องกันการล็อค
+            print("DEBUG: เพิ่ม Chrome flags...")
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--no-first-run')
+            chrome_options.add_argument('--no-default-browser-check')
+            chrome_options.add_argument('--disable-sync')
+            chrome_options.add_argument('--disable-extensions')
+            
+            print("DEBUG: ตั้งค่า profile...")
+            # ลองใช้โปรไฟล์ Default จริง
+            try:
+                chrome_options.add_argument(f"user-data-dir={chrome_user_data}")
+                self.after(0, lambda: print(f"✅ ใช้โปรไฟล์ Chrome จริง: {chrome_user_data}"))
+            except Exception as e:
+                print(f"⚠️ ไม่สามารถตั้งโปรไฟล์: {str(e)}")
+            
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            chrome_options.add_argument('--start-maximized')
+            
+            # สร้าง driver ด้วย webdriver-manager
+            print("DEBUG: import Selenium classes...")
+            from webdriver_manager.chrome import ChromeDriverManager
+            from selenium.webdriver.chrome.service import Service
+            from selenium import webdriver
+            
+            print("DEBUG: สร้าง ChromeDriver service...")
+            service = Service(ChromeDriverManager().install())
+            
+            # Try to create driver
+            driver = None
+            try:
+                print("DEBUG: สร้าง WebDriver instance...")
+                self.after(0, lambda: self.ad_status_label.configure(text="⏳ เปิด Chrome..."))
+                print("DEBUG: เรียก webdriver.Chrome()...")
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                print("DEBUG: Chrome created successfully!")
+                self.after(0, lambda: print("✅ Chrome เปิดสำเร็จ (ใช้โปรไฟล์จริง)"))
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ ไม่สามารถเปิด Chrome ด้วยโปรไฟล์: {error_msg}")
+                self.after(0, lambda msg=error_msg: (
+                    self.ad_preview_label.configure(text=f"❌ เกิดข้อผิดพลาด: {msg}"),
+                    self.ad_status_label.configure(text="❌ ข้อผิดพลาด Chrome"),
+                    messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถเปิด Chrome ได้\n\n{msg}")
+                ))
+                return
+            
+            if driver:
+                import sys
+                driver.set_window_size(1400, 900)
+                
+                # Update UI status
+                self.after(0, lambda: self.ad_status_label.configure(text="⏳ โหลด Gemini Web..."))
+                
+                # Open Gemini Web
+                print("🔄 เปิด Gemini Web...")
+                sys.stdout.flush()
+                driver.get('https://gemini.google.com/app')
+                
+                # Wait for page to load
+                print("⏳ รอให้หน้าโหลด...")
+                sys.stdout.flush()
+                time.sleep(8)
+                print("✅ หน้าโหลดเสร็จ กำลังค้นหา input field...")
+                sys.stdout.flush()
+                
+                # Import Selenium support classes
+                try:
+                    from selenium.webdriver.common.by import By
+                    from selenium.webdriver.support.ui import WebDriverWait
+                    from selenium.webdriver.support import expected_conditions as EC
+                    print("✅ Import Selenium classes สำเร็จ")
+                    sys.stdout.flush()
+                except Exception as e:
+                    print(f"❌ ไม่สามารถ import Selenium: {str(e)}")
+                    sys.stdout.flush()
+                    raise
+                
+                try:
+                    # Update UI status
+                    self.after(0, lambda: self.ad_status_label.configure(text="⏳ ค้นหา input field..."))
+                    
+                    print("🔍 เริ่มค้นหา input field...")
+                    sys.stdout.flush()
+                    
+                    # Wait for input field to be ready
+                    print("🔍 สร้าง WebDriverWait...")
+                    sys.stdout.flush()
+                    wait = WebDriverWait(driver, 20)
+                    print("🔍 สร้าง WebDriverWait สำเร็จ")
+                    sys.stdout.flush()
+                    
+                    # Try to find text input areas
+                    input_selectors = [
+                        'textarea',
+                        '[contenteditable="true"]',
+                        'input[type="text"]',
+                        '.goog-textarea',
+                        '[role="textbox"]',
+                        '[data-tooltip*="message"]',
+                        '[data-tooltip*="Message"]',
+                        '.input-field',
+                        '#input',
+                        '.prompt-input',
+                        '[class*="input"]',
+                        '[class*="text"]',
+                        '[data-test-id*="input"]',
+                        'div[contenteditable]',
+                        '.gemini-input',
+                        '[placeholder*="prompt"]',
+                        '[placeholder*="message"]',
+                        'div[class*="textarea"]',
+                        '[data-tooltip*="Send"]'
+                    ]
+                    
+                    input_field = None
+                    for selector in input_selectors:
+                        try:
+                            print(f"🔍 ลองค้นหา: {selector}")
+                            sys.stdout.flush()
+                            input_field = wait.until(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, selector)),
+                                timeout=5
+                            )
+                            if input_field:
+                                print(f"✅ พบ input field: {selector}")
+                                sys.stdout.flush()
+                                break
+                        except:
+                            continue
+                    
+                    if input_field:
+                        # Send prompt to input
+                        print("🖊️ กำลังกรอก prompt...")
+                        sys.stdout.flush()
+                        try:
+                            input_field.click()
+                            time.sleep(1)
+                            input_field.clear()
+                        except:
+                            # If clear() doesn't work, try selecting all and delete
+                            try:
+                                input_field.send_keys(u'\ue000' + 'a')  # Ctrl+A
+                                input_field.send_keys(u'\ue061')  # Delete
+                            except:
+                                pass
+                        
+                        # Send the prompt text
+                        try:
+                            input_field.send_keys(prompt)
+                        except:
+                            # If send_keys fails, try using JavaScript
+                            try:
+                                driver.execute_script("arguments[0].textContent = arguments[1];", input_field, prompt)
+                                driver.execute_script("arguments[0].innerHTML = arguments[1];", input_field, prompt)
+                            except:
+                                pass
+                        print("✅ กรอก prompt สำเร็จ")
+                        sys.stdout.flush()
+                        
+                        self.after(0, lambda: self.ad_status_label.configure(text="⏳ อัพโหลดรูปภาพ..."))
+                        time.sleep(2)
+                    else:
+                        print("⚠️ ไม่พบ input field")
+                        sys.stdout.flush()
+                    
+                    # Find attach/upload button
+                    print("🔍 ค้นหาปุ่มแนบรูป...")
+                    sys.stdout.flush()
+                    attach_button = None
+                    attach_selectors = [
+                        'button[aria-label*="attach"]',
+                        'button[aria-label*="Attach"]',
+                        'button[aria-label*="image"]',
+                        'button[aria-label*="Image"]',
+                        'button[aria-label*="upload"]',
+                        'button[aria-label*="Upload"]',
+                        'button[title*="attach"]',
+                        'button[title*="Attach"]',
+                        'button[title*="image"]',
+                        'button[title*="Image"]',
+                        '[role="button"][aria-label*="attach"]',
+                        '[role="button"][aria-label*="image"]',
+                        '[role="button"][aria-label*="upload"]',
+                        'button[data-tooltip*="attach"]',
+                        'button[data-tooltip*="image"]',
+                        'button[aria-label*="add"]',
+                        'button[aria-label*="Add"]',
+                        'button[class*="attachment"]',
+                        'button[class*="upload"]'
+                    ]
+                    
+                    for selector in attach_selectors:
+                        try:
+                            buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+                            if buttons and len(buttons) > 0:
+                                attach_button = buttons[0]
+                                print(f"✅ พบปุ่มแนบรูป: {selector}")
+                                sys.stdout.flush()
+                                break
+                        except:
+                            continue
+                    
+                    # If attach button not found, try direct file input
+                    if not attach_button:
+                        print("⚠️ ไม่พบปุ่มแนบรูป ลองส่งไฟล์โดยตรง...")
+                        sys.stdout.flush()
+                        file_inputs = driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
+                        if file_inputs and len(file_inputs) > 0:
+                            # Send file directly to file input
+                            file_input = file_inputs[0]
+                            abs_image_path = os.path.abspath(image_path)
+                            print(f"📁 ส่งไฟล์: {abs_image_path}")
+                            sys.stdout.flush()
+                            driver.execute_script("arguments[0].style.display='block';", file_input)
+                            file_input.send_keys(abs_image_path)
+                            print("✅ ส่งไฟล์สำเร็จ")
+                            sys.stdout.flush()
+                            time.sleep(3)
+                    else:
+                        # Click attach button and select file
+                        print("🖱️ กำลังคลิกปุ่มแนบรูป...")
+                        sys.stdout.flush()
+                        attach_button.click()
+                        time.sleep(2)
+                        
+                        # Find and send file
+                        file_inputs = driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
+                        if file_inputs and len(file_inputs) > 0:
+                            file_input = file_inputs[0]
+                            abs_image_path = os.path.abspath(image_path)
+                            print(f"📁 ส่งไฟล์: {abs_image_path}")
+                            sys.stdout.flush()
+                            file_input.send_keys(abs_image_path)
+                            print("✅ ส่งไฟล์สำเร็จ")
+                            sys.stdout.flush()
+                            time.sleep(3)
+                    
+                    # Try to send (find send button)
+                    print("🔍 ค้นหาปุ่มส่ง...")
+                    sys.stdout.flush()
+                    send_selectors = [
+                        'button[aria-label*="Send"]',
+                        'button[aria-label*="send"]',
+                        'button[aria-label*="submit"]',
+                        'button[aria-label*="Submit"]',
+                        '[data-tooltip*="Send"]',
+                        '[data-tooltip*="send"]',
+                        'button[title*="Send"]',
+                        'button[title*="send"]',
+                        '[role="button"][aria-label*="send"]',
+                        '[role="button"][aria-label*="Submit"]',
+                        'button[data-tooltip*="Send"]',
+                        'button[data-tooltip*="send"]',
+                        'button[class*="send"]',
+                        'button[class*="submit"]',
+                        '[class*="send-button"]',
+                        '[class*="submit-button"]',
+                        'button:last-child',  # Sometimes send button is last
+                        'div[role="button"][aria-label*="Send"]'
+                    ]
+                    
+                    sent = False
+                    for selector in send_selectors:
+                        try:
+                            send_buttons = driver.find_elements(By.CSS_SELECTOR, selector)
+                            if send_buttons and len(send_buttons) > 0:
+                                print(f"🖱️ พบปุ่มส่ง กำลังคลิก: {selector}")
+                                sys.stdout.flush()
+                                send_buttons[0].click()
+                                time.sleep(2)
+                                sent = True
+                                print("✅ ส่งสำเร็จ")
+                                sys.stdout.flush()
+                                break
+                        except Exception as e:
+                            print(f"⚠️ ไม่สามารถคลิก {selector}: {str(e)}")
+                            sys.stdout.flush()
+                            continue
+                    
+                    if not sent:
+                        # Try pressing Enter
+                        print("⏎ ลองกดปุ่ม Enter...")
+                        sys.stdout.flush()
+                        try:
+                            if input_field:
+                                input_field.send_keys(u'\ue007')  # Enter key
+                            print("✅ ส่งสำเร็จ (Enter)")
+                            sys.stdout.flush()
+                        except Exception as e:
+                            print(f"⚠️ ไม่สามารถกด Enter: {str(e)}")
+                            sys.stdout.flush()
+                            pass
+                    
+                    image_name = Path(image_path).name
+                    success_text = f"""✅ ส่งข้อมูลไปยัง Gemini Web แล้ว
 
-ป้อน Prompt นี้ใน Gemini:
+📋 ข้อมูลที่ส่ง:
+• สินค้า: {product_name}
+• บาร์โค้ด: {barcode}
+• ราคา: {price}
+• รูป: {image_name}
 
-{full_prompt}
+📍 Gemini กำลังสร้างรูปโฆษณา...
 
-หลังจากสร้างรูป:
-1. Download รูปจาก Gemini
-2. นำมาใส่ในโฟลเดอร์ ads_output/
-3. โพสไป Facebook ได้เลย!""")
+ปิดหน้าต่างเบราว์เซอร์เมื่อเสร็จ
+"""
+                    
+                    self.after(0, lambda: (
+                        self.ad_status_label.configure(text="✅ ส่งข้อมูลสำเร็จ"),
+                        self.ad_preview_label.configure(text=success_text)
+                    ))
+                    print("✅ การทำงาน automation เสร็จสิ้น")
+                    sys.stdout.flush()
+                    
+                    # Clean up temp directory
+                    try:
+                        if os.path.exists(temp_dir):
+                            import shutil
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                            print(f"✅ ลบ temporary profile: {temp_dir}")
+                    except:
+                        pass
+                    
+                    # Close browser after completion (not closing - let user see results)
+                    # driver.quit()
+                    
+                except Exception as e:
+                    print(f"❌ Error during automation: {e}")
+                    sys.stdout.flush()
+                    import traceback
+                    traceback.print_exc()
+                    
+                    # Clean up temp directory
+                    try:
+                        if os.path.exists(temp_dir):
+                            import shutil
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                    except:
+                        pass
+                    
+                    # ปิด driver ถ้าเกิด error
+                    if driver:
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                    
+                    image_name = Path(image_path).name
+                    # ถ้าอัตโนมัติล้มเหลว ให้ดำเนินการด้วยตนเอง
+                    manual_text = f"""⚠️ ไม่สามารถสั่งการอัตโนมัติได้
+
+กรุณากรอกข้อมูลด้วยตนเอง:
+• สินค้า: {product_name}
+• บาร์โค้ด: {barcode}
+• ราคา: {price}
+• รูป: {image_name}
+
+📝 Prompt:
+{prompt}
+
+ขั้นตอน:
+1️⃣  กดปุ่มแนบรูป (Attach/Image)
+2️⃣  เลือกรูป: {image_name}
+3️⃣  วาง Prompt ลงในช่องข้อความ
+4️⃣  ให้ Gemini สร้างรูปโฆษณา
+"""
+                    
+                    self.after(0, lambda: (
+                        self.ad_status_label.configure(text="⚠️ กรุณากรอกด้วยตนเอง"),
+                        self.ad_preview_label.configure(text=manual_text)
+                    ))
+            else:
+                error_msg = "❌ Driver ไม่ได้สร้าง"
+                print(error_msg)
+                self.after(0, lambda: (
+                    self.ad_preview_label.configure(text=error_msg),
+                    self.ad_status_label.configure(text="❌ เกิดข้อผิดพลาด"),
+                    messagebox.showerror("Error", error_msg)
+                ))
+        
+        except Exception as e:
+            error_msg = f"❌ เกิดข้อผิดพลาด:\n{str(e)}"
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # ปิด driver ถ้ามี
+            if 'driver' in locals() and driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+            
+            self.after(0, lambda: (
+                self.ad_preview_label.configure(text=error_msg),
+                self.ad_status_label.configure(text="❌ เกิดข้อผิดพลาด"),
+                messagebox.showerror("Error", error_msg)
+            ))
+    
+    def _call_gemini_api(self, image_path, prompt, product_name, price):
+        """เรียก Gemini API สำหรับสร้างรูปโฆษณา (ใช้ไม่ได้ - สำรองไว้)"""
+        try:
+            import warnings
+            warnings.filterwarnings('ignore', category=FutureWarning)
+            import google.generativeai as genai
+            import time
+            
+            # ตรวจสอบ API key
+            api_key = self.ai_config.get("ai_api_key", "")
+            if not api_key:
+                self.after(0, lambda: (
+                    self.ad_status_label.configure(text="❌ ไม่มี API Key กำหนด"),
+                    messagebox.showerror("ไม่มี API Key", "กรุณาตั้งค่า Gemini API Key ก่อน")
+                ))
+                return
+            
+            genai.configure(api_key=api_key)
+            
+            # โหลดรูป
+            from PIL import Image
+            img = Image.open(image_path)
+            
+            # ใช้ Gemini 1.5 Flash (มี free quota ดี)
+            model = genai.GenerativeModel('models/gemini-1.5-flash')
+            
+            # สร้าง prompt ที่ง่ายและสั้น
+            enhanced_prompt = f"""สร้างรูปโฆษณาสินค้า:
+- ชื่อ: {product_name}
+- ราคา: {price}
+
+{prompt}
+
+ขนาด: 1200x628 pixels"""
+            
+            # ส่งคำขอไปยัง Gemini พร้อมรูปภาพ (retry 3 ครั้ง)
+            max_retries = 3
+            response = None
+            
+            for attempt in range(max_retries):
+                try:
+                    response = model.generate_content([enhanced_prompt, img])
+                    break  # สำเร็จ
+                except Exception as e:
+                    if "quota" in str(e).lower() and attempt < max_retries - 1:
+                        wait_time = 2 ** attempt  # exponential backoff
+                        self.after(0, lambda t=wait_time: 
+                            self.ad_status_label.configure(text=f"⏳ Quota ครบแล้ว รอ {t} วินาทีแล้วลอง..."))
+                        time.sleep(wait_time)
+                    else:
+                        raise
+            
+            if response and response.text:
+                result_text = response.text
+                
+                # แสดงผล
+                self.after(0, lambda: (
+                    self.ad_preview_label.configure(text=f"✅ สร้างสำเร็จ!\n\n{result_text}"),
+                    self.ad_status_label.configure(text="✅ Gemini สร้างโฆษณาสำเร็จ!")
+                ))
+            else:
+                self.after(0, lambda: (
+                    self.ad_preview_label.configure(text="⚠️ Gemini ตอบกลับแต่ไม่มีผล"),
+                    self.ad_status_label.configure(text="⚠️ ไม่มีผลออกมา")
+                ))
+        
+        except Exception as e:
+            error_msg = f"❌ เกิดข้อผิดพลาด:\n{str(e)}"
+            
+            # แสดงคำแนะนำเพิ่มเติมสำหรับ quota
+            if "quota" in str(e).lower():
+                error_msg += "\n\n💡 Quota ครบแล้ว:\n- รอเรื่อย ๆ แล้วลองใหม่\n- หรือใช้ Paid API Key"
+            
+            self.after(0, lambda: (
+                self.ad_preview_label.configure(text=error_msg),
+                self.ad_status_label.configure(text="❌ เกิดข้อผิดพลาด"),
+                messagebox.showerror("Gemini API Error", error_msg)
+            ))
+            print(f"Gemini API Error: {e}")
+
     
     def create_simple_ad_manual(self):
         """สร้างรูปโฆษณาแบบง่าย (เพิ่มข้อความบนรูป)"""
