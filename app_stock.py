@@ -148,6 +148,16 @@ class StockManagerApp(ctk.CTk):
                     self.sheet_sales.append_row(["ReceiptID", "Date", "Barcode", "Name", "Qty", "UnitPrice", "Total", "UsedCoupon", "DiscountAmount", "PaymentMethod", "ReceivedCoupon", "Cancel"])
                 except:
                     self.sheet_sales = self.sh.sheet1
+            
+            # เพิ่ม Suppliers sheet
+            try:
+                self.sheet_suppliers = self.sh.worksheet("Suppliers")
+            except:
+                try:
+                    self.sheet_suppliers = self.sh.add_worksheet(title="Suppliers", rows="500", cols="5")
+                    self.sheet_suppliers.append_row(["SupplierID", "Name", "Phone", "Address", "Note"])
+                except:
+                    self.sheet_suppliers = None
         except Exception as e:
             messagebox.showerror("Connection Error", f"{e}")
             self.destroy()
@@ -214,12 +224,16 @@ class StockManagerApp(ctk.CTk):
         self.tab_inventory = self.tabview.add("📦 คลังสินค้า (Inventory)")
         self.tab_history = self.tabview.add("📜 ประวัติการขาย (History)")
         self.tab_dashboard = self.tabview.add("📊 ภาพรวม (Dashboard)")
+        self.tab_reports = self.tabview.add("📈 รายงาน (Reports)")
+        self.tab_suppliers = self.tabview.add("🏭 ซัพพลายเออร์ (Suppliers)")
         self.tab_ai_social = self.tabview.add("🤖 AI & Social Media")
 
         self.setup_pos_tab()
         self.setup_inventory_tab()
         self.setup_history_tab()
         self.setup_dashboard_tab()
+        self.setup_reports_tab()
+        self.setup_suppliers_tab()
         self.setup_ai_social_tab()
 
     # =========================================
@@ -1500,7 +1514,427 @@ class StockManagerApp(ctk.CTk):
         except: pass
 
     # =========================================
-    # TAB 5: AI & Social Media
+    # TAB 5: Reports (รายงาน)
+    # =========================================
+    def setup_reports_tab(self):
+        """Setup tab สำหรับรายงานการขายและวิเคราะห์ข้อมูล"""
+        main_scroll = ctk.CTkScrollableFrame(self.tab_reports, fg_color="transparent")
+        main_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # หัวข้อ
+        ctk.CTkLabel(main_scroll, text="📈 รายงาน (Reports)", font=("Kanit", 24, "bold")).pack(pady=15)
+        
+        # ฟิลเตอร์วันที่ด้วยปฏิทิน
+        filter_frame = ctk.CTkFrame(main_scroll, fg_color="gray30", corner_radius=10)
+        filter_frame.pack(fill="x", pady=10, padx=5)
+        
+        ctk.CTkLabel(filter_frame, text="เลือกช่วงวันที่:", font=("Kanit", 12, "bold")).pack(side="left", padx=10, pady=10)
+        
+        # ปฏิทินเริ่มต้น
+        try:
+            self.report_date_from_cal = DateEntry(filter_frame, font=("Kanit", 10), 
+                                                  year=datetime.now().year, 
+                                                  month=datetime.now().month, 
+                                                  day=datetime.now().day)
+            self.report_date_from_cal.pack(side="left", padx=5, pady=10)
+        except:
+            self.report_date_from_cal = ctk.CTkEntry(filter_frame, placeholder_text="2026-01-01", width=120)
+            self.report_date_from_cal.pack(side="left", padx=5, pady=10)
+        
+        ctk.CTkLabel(filter_frame, text="ถึง", font=("Kanit", 12)).pack(side="left", padx=5)
+        
+        # ปฏิทินสิ้นสุด
+        try:
+            self.report_date_to_cal = DateEntry(filter_frame, font=("Kanit", 10),
+                                               year=datetime.now().year, 
+                                               month=datetime.now().month, 
+                                               day=datetime.now().day)
+            self.report_date_to_cal.pack(side="left", padx=5, pady=10)
+        except:
+            self.report_date_to_cal = ctk.CTkEntry(filter_frame, placeholder_text="2026-01-31", width=120)
+            self.report_date_to_cal.pack(side="left", padx=5, pady=10)
+        
+        btn_generate = ctk.CTkButton(filter_frame, text="🔄 สร้างรายงาน", command=self.generate_all_reports, 
+                                     font=("Kanit", 12, "bold"), width=150, height=35)
+        btn_generate.pack(side="left", padx=10, pady=10)
+        
+        # ปุ่มรายงานต่าง ๆ
+        reports_frame = ctk.CTkFrame(main_scroll, fg_color="gray30", corner_radius=10)
+        reports_frame.pack(fill="x", pady=10, padx=5)
+        
+        ctk.CTkLabel(reports_frame, text="เลือกรายงาน:", font=("Kanit", 12, "bold")).pack(pady=10, anchor="w", padx=10)
+        
+        btn_daily = ctk.CTkButton(reports_frame, text="📅 รายงานยอดขายรายวัน", 
+                                  command=lambda: self.show_report_type("daily"), 
+                                  font=("Kanit", 11), height=40)
+        btn_daily.pack(fill="x", padx=10, pady=5)
+        
+        btn_monthly = ctk.CTkButton(reports_frame, text="📊 รายงานยอดขายรายเดือน", 
+                                    command=lambda: self.show_report_type("monthly"), 
+                                    font=("Kanit", 11), height=40)
+        btn_monthly.pack(fill="x", padx=10, pady=5)
+        
+        btn_best_seller = ctk.CTkButton(reports_frame, text="⭐ รายงานสินค้าขายดี", 
+                                        command=lambda: self.show_report_type("best_seller"), 
+                                        font=("Kanit", 11), height=40)
+        btn_best_seller.pack(fill="x", padx=10, pady=5)
+        
+        btn_stock = ctk.CTkButton(reports_frame, text="📦 รายงานสต็อกคงเหลือ", 
+                                  command=lambda: self.show_report_type("stock"), 
+                                  font=("Kanit", 11), height=40)
+        btn_stock.pack(fill="x", padx=10, pady=5)
+        
+        btn_profit = ctk.CTkButton(reports_frame, text="💰 รายงานกำไรขาดทุน", 
+                                   command=lambda: self.show_report_type("profit"), 
+                                   font=("Kanit", 11), height=40)
+        btn_profit.pack(fill="x", padx=10, pady=5)
+        
+        # พื้นที่แสดงผลรายงาน
+        report_display_frame = ctk.CTkFrame(main_scroll, fg_color="gray25", corner_radius=10)
+        report_display_frame.pack(fill="both", expand=True, pady=10, padx=5)
+        
+        ctk.CTkLabel(report_display_frame, text="ผลลัพธ์รายงาน", font=("Kanit", 12, "bold")).pack(pady=10, anchor="w", padx=10)
+        
+        self.report_text = ctk.CTkTextbox(report_display_frame, font=("Kanit", 10), height=300)
+        self.report_text.pack(fill="both", expand=True, padx=10, pady=10)
+
+    def generate_all_reports(self):
+        """สร้างรายงานทั้งหมดตามช่วงวันที่ที่เลือก"""
+        try:
+            # ดึงวันที่จาก DateEntry หรือ Entry
+            if hasattr(self.report_date_from_cal, 'get_date'):
+                date_from = self.report_date_from_cal.get_date().strftime("%Y-%m-%d")
+                date_to = self.report_date_to_cal.get_date().strftime("%Y-%m-%d")
+            else:
+                date_from = self.report_date_from_cal.get()
+                date_to = self.report_date_to_cal.get()
+            
+            self.report_text.delete("1.0", "end")
+            self.report_text.insert("1.0", f"📊 กำลังสร้างรายงาน (จาก {date_from} ถึง {date_to})...\n\n")
+            self.report_text.insert("end", "⏳ ระบบกำลังประมวลผล โปรดรอสักครู่...\n\n")
+            
+            # เรียกทำงานในเธรดเพื่อไม่ให้ UI เมิน
+            threading.Thread(target=self.run_generate_reports, args=(date_from, date_to), daemon=True).start()
+        except Exception as e:
+            self.report_text.delete("1.0", "end")
+            self.report_text.insert("1.0", f"❌ เกิดข้อผิดพลาด: {str(e)}")
+
+    def run_generate_reports(self, date_from, date_to):
+        """ดึงข้อมูลจาก Google Sheet และสร้างรายงาน"""
+        try:
+            records = self.sheet_sales.get_all_values()
+            
+            total_sales = 0.0
+            total_bills = 0
+            daily_sales = defaultdict(lambda: {"total": 0.0, "count": 0})
+            product_sales = defaultdict(lambda: {"qty": 0, "total": 0.0})
+            cancelled_count = 0
+            
+            if len(records) > 1:
+                for row in records[1:]:
+                    if len(row) >= 12:
+                        rec_date = row[1].split(" ")[0]  # ดึงเฉพาะวันที่
+                        
+                        # ตรวจสอบว่าอยู่ในช่วงวันที่หรือไม่
+                        if rec_date < date_from or rec_date > date_to:
+                            continue
+                        
+                        # ตรวจสอบว่ายกเลิกหรือไม่
+                        is_cancelled = row[11].strip().lower() == 'yes' if len(row) > 11 else False
+                        if is_cancelled:
+                            cancelled_count += 1
+                            continue
+                        
+                        # คำนวณยอดขาย
+                        total_str = row[6]
+                        try:
+                            total = float(total_str) if total_str else 0.0
+                        except:
+                            total = 0.0
+                        
+                        total_sales += total
+                        total_bills += 1
+                        
+                        # จำแนกตามวันที่
+                        daily_sales[rec_date]["total"] += total
+                        daily_sales[rec_date]["count"] += 1
+                        
+                        # จำแนกตามสินค้า
+                        name = row[3]
+                        qty_str = row[4]
+                        try:
+                            qty = int(qty_str) if qty_str else 0
+                        except:
+                            qty = 0
+                        
+                        product_sales[name]["qty"] += qty
+                        product_sales[name]["total"] += total
+            
+            # แสดงผลรายงาน
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: self.display_report_results, date_from, date_to, total_sales, 
+                          total_bills, daily_sales, product_sales, cancelled_count)
+        except Exception as e:
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
+                                      self.report_text.insert("1.0", f"❌ เกิดข้อผิดพลาด: {str(e)}")))
+
+    def display_report_results(self, date_from, date_to, total_sales, total_bills, daily_sales, product_sales, cancelled_count):
+        """แสดงผลรายงาน"""
+        self.report_text.delete("1.0", "end")
+        
+        report_text = f"📊 รายงานสรุปยอดขาย\n"
+        report_text += f"{'='*60}\n"
+        report_text += f"ช่วงวันที่: {date_from} ถึง {date_to}\n\n"
+        
+        report_text += f"💰 ยอดขายรวม: {total_sales:,.2f} บาท\n"
+        report_text += f"📋 จำนวนใบเสร็จ: {total_bills} ใบ\n"
+        report_text += f"❌ ใบเสร็จที่ยกเลิก: {cancelled_count} ใบ\n"
+        report_text += f"📈 เฉลี่ยต่อใบเสร็จ: {(total_sales/total_bills if total_bills > 0 else 0):,.2f} บาท\n\n"
+        
+        report_text += f"📅 ยอดขายรายวัน:\n"
+        report_text += f"{'-'*60}\n"
+        for date_key in sorted(daily_sales.keys()):
+            data = daily_sales[date_key]
+            report_text += f"  {date_key}: {data['total']:>10,.2f} บาท ({data['count']} ใบ)\n"
+        
+        report_text += f"\n⭐ สินค้าขายดี TOP 10:\n"
+        report_text += f"{'-'*60}\n"
+        sorted_products = sorted(product_sales.items(), key=lambda x: x[1]["qty"], reverse=True)[:10]
+        for i, (name, data) in enumerate(sorted_products, 1):
+            report_text += f"  {i}. {name[:20]:20} - {data['qty']} ชิ้น ({data['total']:,.2f} บาท)\n"
+        
+        self.report_text.insert("1.0", report_text)
+
+    def show_report_type(self, report_type):
+        """แสดงรายงานตามประเภท"""
+        self.report_text.delete("1.0", "end")
+        
+        if report_type == "daily":
+            self.report_text.insert("1.0", "📅 รายงานยอดขายรายวัน\n" + "="*50 + "\n\n")
+            # TODO: ดึงข้อมูลจาก Google Sheet และแสดง
+            self.report_text.insert("end", "ยอดขายรวม: 0.00 บาท\nจำนวนใบเสร็จ: 0 ใบ")
+        
+        elif report_type == "monthly":
+            self.report_text.insert("1.0", "📊 รายงานยอดขายรายเดือน\n" + "="*50 + "\n\n")
+            self.report_text.insert("end", "ยอดขายรวม: 0.00 บาท\nจำนวนใบเสร็จ: 0 ใบ")
+        
+        elif report_type == "best_seller":
+            self.report_text.insert("1.0", "⭐ รายงานสินค้าขายดี\n" + "="*50 + "\n\n")
+            self.report_text.insert("end", "สินค้าที่ขายดีสุด:\n1. (ยังไม่มีข้อมูล)")
+        
+        elif report_type == "stock":
+            self.report_text.insert("1.0", "📦 รายงานสต็อกคงเหลือ\n" + "="*50 + "\n\n")
+            self.report_text.insert("end", "สต็อกทั้งหมด: 0 ชิ้น\nมูลค่า: 0.00 บาท")
+        
+        elif report_type == "profit":
+            self.report_text.insert("1.0", "💰 รายงานกำไรขาดทุน\n" + "="*50 + "\n\n")
+            self.report_text.insert("end", "ยอดรวมขายสินค้า: 0.00 บาท\nยอดรวมต้นทุน: 0.00 บาท\nกำไร: 0.00 บาท")
+
+    # =========================================
+    # TAB 6: Suppliers (ซัพพลายเออร์)
+    # =========================================
+    def setup_suppliers_tab(self):
+        """Setup tab สำหรับจัดการข้อมูลซัพพลายเออร์"""
+        main_scroll = ctk.CTkScrollableFrame(self.tab_suppliers, fg_color="transparent")
+        main_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # หัวข้อ
+        ctk.CTkLabel(main_scroll, text="🏭 ซัพพลายเออร์ (Suppliers)", font=("Kanit", 24, "bold")).pack(pady=15)
+        
+        # ปุ่มเพิ่มซัพพลายเออร์
+        action_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        action_frame.pack(fill="x", pady=10)
+        
+        btn_add_supplier = ctk.CTkButton(action_frame, text="➕ เพิ่มซัพพลายเออร์ใหม่", 
+                                         command=self.add_supplier_dialog, 
+                                         font=("Kanit", 12, "bold"), height=35)
+        btn_add_supplier.pack(side="left", padx=5)
+        
+        btn_refresh_suppliers = ctk.CTkButton(action_frame, text="🔄 รีเฟรช", 
+                                              command=self.load_suppliers, 
+                                              font=("Kanit", 12, "bold"), height=35)
+        btn_refresh_suppliers.pack(side="left", padx=5)
+        
+        # ตารางแสดงซัพพลายเออร์
+        table_frame = ctk.CTkFrame(main_scroll, fg_color="gray30", corner_radius=10)
+        table_frame.pack(fill="both", expand=True, pady=10, padx=5)
+        
+        # ส่วนหัวตาราง
+        header_frame = ctk.CTkFrame(table_frame, fg_color="gray40")
+        header_frame.pack(fill="x", padx=5, pady=5)
+        
+        ctk.CTkLabel(header_frame, text="รหัส", font=("Kanit", 11, "bold"), width=80).pack(side="left", padx=5)
+        ctk.CTkLabel(header_frame, text="ชื่อซัพพลายเออร์", font=("Kanit", 11, "bold")).pack(side="left", padx=5, fill="x", expand=True)
+        ctk.CTkLabel(header_frame, text="เบอร์โทร", font=("Kanit", 11, "bold"), width=120).pack(side="left", padx=5)
+        ctk.CTkLabel(header_frame, text="จัดการ", font=("Kanit", 11, "bold"), width=100).pack(side="left", padx=5)
+        
+        # รายการซัพพลายเออร์ (Scrollable)
+        suppliers_list_frame = ctk.CTkScrollableFrame(table_frame, fg_color="gray30")
+        suppliers_list_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        self.suppliers_list_frame = suppliers_list_frame
+        self.load_suppliers()
+
+    def load_suppliers(self):
+        """โหลดรายชื่อซัพพลายเออร์จาก Google Sheet"""
+        # ล้างรายการเก่า
+        for widget in self.suppliers_list_frame.winfo_children():
+            widget.destroy()
+        
+        try:
+            if not self.sheet_suppliers:
+                empty_label = ctk.CTkLabel(self.suppliers_list_frame, text="⚠️ ไม่สามารถเชื่อมต่อ Google Sheet", 
+                                           font=("Kanit", 12))
+                empty_label.pack(pady=20)
+                return
+            
+            records = self.sheet_suppliers.get_all_values()
+            
+            if len(records) <= 1:
+                empty_label = ctk.CTkLabel(self.suppliers_list_frame, text="📭 ไม่มีข้อมูลซัพพลายเออร์", 
+                                           font=("Kanit", 12))
+                empty_label.pack(pady=20)
+                return
+            
+            # แสดงข้อมูลซัพพลายเออร์
+            for row_idx, row in enumerate(records[1:], start=2):  # ข้าม header
+                safe_row = (row + [""] * 5)[:5]  # ให้แน่ใจว่ามี 5 columns
+                sup_id = safe_row[0]
+                sup_name = safe_row[1]
+                sup_phone = safe_row[2]
+                sup_address = safe_row[3]
+                
+                item_frame = ctk.CTkFrame(self.suppliers_list_frame, fg_color="gray25")
+                item_frame.pack(fill="x", padx=5, pady=3)
+                
+                ctk.CTkLabel(item_frame, text=sup_id[:8], font=("Kanit", 10), width=80).pack(side="left", padx=5, pady=10)
+                ctk.CTkLabel(item_frame, text=sup_name[:25], font=("Kanit", 10)).pack(side="left", padx=5, pady=10, fill="x", expand=True)
+                ctk.CTkLabel(item_frame, text=sup_phone[:15], font=("Kanit", 10), width=120).pack(side="left", padx=5, pady=10)
+                
+                btn_edit = ctk.CTkButton(item_frame, text="✏️ แก้ไข", font=("Kanit", 9), width=50, height=25,
+                                         command=lambda ri=row_idx, s=(sup_id, sup_name, sup_phone, sup_address): self.edit_supplier(ri, s))
+                btn_edit.pack(side="left", padx=2, pady=10)
+                
+                btn_delete = ctk.CTkButton(item_frame, text="🗑️ ลบ", font=("Kanit", 9), width=50, height=25,
+                                           fg_color="#E74C3C", hover_color="#C0392B",
+                                           command=lambda ri=row_idx, si=sup_id: self.delete_supplier(ri, si))
+                btn_delete.pack(side="left", padx=2, pady=10)
+        except Exception as e:
+            error_label = ctk.CTkLabel(self.suppliers_list_frame, text=f"❌ เกิดข้อผิดพลาด: {str(e)}", 
+                                       font=("Kanit", 10))
+            error_label.pack(pady=20)
+
+    def add_supplier_dialog(self):
+        """เปิด dialog สำหรับเพิ่มซัพพลายเออร์ใหม่"""
+        # สร้าง window ใหม่
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("เพิ่มซัพพลายเออร์ใหม่")
+        dialog.geometry("400x300")
+        dialog.resizable(False, False)
+        
+        ctk.CTkLabel(dialog, text="เพิ่มซัพพลายเออร์ใหม่", font=("Kanit", 16, "bold")).pack(pady=15)
+        
+        # รหัสซัพพลายเออร์ (auto-generate)
+        ctk.CTkLabel(dialog, text="ชื่อซัพพลายเออร์:", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
+        entry_name = ctk.CTkEntry(dialog, placeholder_text="ชื่อบริษัท", width=350)
+        entry_name.pack(padx=15, pady=5)
+        
+        ctk.CTkLabel(dialog, text="เบอร์โทร:", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
+        entry_phone = ctk.CTkEntry(dialog, placeholder_text="เช่น 02-123-4567", width=350)
+        entry_phone.pack(padx=15, pady=5)
+        
+        ctk.CTkLabel(dialog, text="ที่อยู่:", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
+        entry_address = ctk.CTkEntry(dialog, placeholder_text="ที่อยู่ซัพพลายเออร์", width=350)
+        entry_address.pack(padx=15, pady=5)
+        
+        def save_supplier():
+            name = entry_name.get().strip()
+            phone = entry_phone.get().strip()
+            address = entry_address.get().strip()
+            
+            if not name:
+                messagebox.showwarning("ข้อมูลไม่ครบ", "กรุณาใส่ชื่อซัพพลายเออร์")
+                return
+            
+            try:
+                # สร้าง ID อัตโนมัติ (SUP + timestamp)
+                import time
+                sup_id = f"SUP{int(time.time()) % 100000}"
+                
+                # เพิ่มลงใน Google Sheet
+                self.sheet_suppliers.append_row([sup_id, name, phone, address, ""])
+                messagebox.showinfo("สำเร็จ", f"เพิ่มซัพพลายเออร์ {name} เรียบร้อย!")
+                dialog.destroy()
+                self.load_suppliers()
+            except Exception as e:
+                messagebox.showerror("เกิดข้อผิดพลาด", str(e))
+        
+        btn_save = ctk.CTkButton(dialog, text="💾 บันทึก", command=save_supplier, 
+                                 font=("Kanit", 12, "bold"), height=40)
+        btn_save.pack(padx=15, pady=20, fill="x")
+
+    def edit_supplier(self, row_idx, supplier_data):
+        """แก้ไขข้อมูลซัพพลายเออร์"""
+        sup_id, sup_name, sup_phone, sup_address = supplier_data
+        
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("แก้ไขซัพพลายเออร์")
+        dialog.geometry("400x320")
+        dialog.resizable(False, False)
+        
+        ctk.CTkLabel(dialog, text="แก้ไขซัพพลายเออร์", font=("Kanit", 16, "bold")).pack(pady=15)
+        
+        ctk.CTkLabel(dialog, text=f"รหัส: {sup_id}", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
+        
+        ctk.CTkLabel(dialog, text="ชื่อซัพพลายเออร์:", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
+        entry_name = ctk.CTkEntry(dialog, width=350)
+        entry_name.insert(0, sup_name)
+        entry_name.pack(padx=15, pady=5)
+        
+        ctk.CTkLabel(dialog, text="เบอร์โทร:", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
+        entry_phone = ctk.CTkEntry(dialog, width=350)
+        entry_phone.insert(0, sup_phone)
+        entry_phone.pack(padx=15, pady=5)
+        
+        ctk.CTkLabel(dialog, text="ที่อยู่:", font=("Kanit", 11)).pack(anchor="w", padx=15, pady=5)
+        entry_address = ctk.CTkEntry(dialog, width=350)
+        entry_address.insert(0, sup_address)
+        entry_address.pack(padx=15, pady=5)
+        
+        def save_changes():
+            name = entry_name.get().strip()
+            phone = entry_phone.get().strip()
+            address = entry_address.get().strip()
+            
+            try:
+                # อัปเดตในใน Google Sheet
+                self.sheet_suppliers.update_cell(row_idx, 2, name)  # column 2 = Name
+                self.sheet_suppliers.update_cell(row_idx, 3, phone)  # column 3 = Phone
+                self.sheet_suppliers.update_cell(row_idx, 4, address)  # column 4 = Address
+                messagebox.showinfo("สำเร็จ", "อัปเดตข้อมูลซัพพลายเออร์เรียบร้อย!")
+                dialog.destroy()
+                self.load_suppliers()
+            except Exception as e:
+                messagebox.showerror("เกิดข้อผิดพลาด", str(e))
+        
+        btn_save = ctk.CTkButton(dialog, text="💾 บันทึก", command=save_changes, 
+                                 font=("Kanit", 12, "bold"), height=40)
+        btn_save.pack(padx=15, pady=15, fill="x")
+
+    def delete_supplier(self, row_idx, sup_id):
+        """ลบซัพพลายเออร์"""
+        confirm = messagebox.askyesno("ยืนยันการลบ", f"คุณแน่ใจหรือว่าต้องการลบซัพพลายเออร์ {sup_id}?")
+        if confirm:
+            try:
+                self.sheet_suppliers.delete_rows(row_idx)
+                messagebox.showinfo("สำเร็จ", "ลบซัพพลายเออร์เรียบร้อย!")
+                self.load_suppliers()
+            except Exception as e:
+                messagebox.showerror("เกิดข้อผิดพลาด", str(e))
+
+    # =========================================
+    # TAB 7: AI & Social Media
     # =========================================
     def setup_ai_social_tab(self):
         """Setup tab สำหรับ AI content generation และ Social media posting"""
