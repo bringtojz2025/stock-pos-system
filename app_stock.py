@@ -223,8 +223,8 @@ class StockManagerApp(ctk.CTk):
                 self.sheet_sales = self.sh.worksheet("Sales")
             except:
                 try:
-                    self.sheet_sales = self.sh.add_worksheet(title="Sales", rows="1000", cols="12")
-                    self.sheet_sales.append_row(["ReceiptID", "Date", "Barcode", "Name", "Qty", "UnitPrice", "Total", "UsedCoupon", "DiscountAmount", "PaymentMethod", "ReceivedCoupon", "Cancel"])
+                    self.sheet_sales = self.sh.add_worksheet(title="Sales", rows="1000", cols="14")
+                    self.sheet_sales.append_row(["ReceiptID", "Date", "CustomerPhone", "CustomerName", "Barcode", "Name", "Qty", "UnitPrice", "Total", "UsedCoupon", "DiscountAmount", "PaymentMethod", "ReceivedCoupon", "Cancel"])
                 except:
                     self.sheet_sales = self.sh.sheet1
             
@@ -363,6 +363,7 @@ class StockManagerApp(ctk.CTk):
         self.tab_pos = self.tabview.add("🛒 ขายหน้าร้าน (POS)")
         self.tab_history = self.tabview.add("📜 ประวัติการขาย (History)")
         self.tab_inventory = self.tabview.add("📦 คลังสินค้า (Inventory)")
+        self.tab_customers = self.tabview.add("👥 ลูกค้า (Customers)")
         self.tab_dashboard = self.tabview.add("📊 ภาพรวม (Dashboard)")
         self.tab_reports = self.tabview.add("📈 รายงาน (Reports)")
         self.tab_suppliers = self.tabview.add("🏭 ซัพพลายเออร์ (Suppliers)")
@@ -371,6 +372,7 @@ class StockManagerApp(ctk.CTk):
         self.setup_pos_tab()
         self.setup_history_tab()
         self.setup_inventory_tab()
+        self.setup_customers_tab()
         self.setup_dashboard_tab()
         self.setup_reports_tab()
         self.setup_suppliers_tab()
@@ -568,6 +570,29 @@ objShell.MinimizeAll()
         btn_add_manual = ctk.CTkButton(left_frame, text="➕ เพิ่มรายการอื่นๆ", command=self.add_manual_item,
                                        font=("Kanit", 14), height=40, fg_color="#8E44AD", hover_color="#7D3C98")
         btn_add_manual.pack(pady=10, fill="x", padx=10)
+        
+        # --- ส่วนเบอร์โทรศัพท์สมาชิก ---
+        ctk.CTkLabel(left_frame, text="👤 สมาชิก", font=("Kanit", 16, "bold")).pack(pady=(20, 10))
+        
+        member_frame = ctk.CTkFrame(left_frame, fg_color="gray25")
+        member_frame.pack(fill="x", padx=10, pady=5)
+        ctk.CTkLabel(member_frame, text="เบอร์โทรศัพท์:", font=("Kanit", 11)).pack(anchor="w", padx=10, pady=5)
+        
+        # Frame สำหรับช่อง input และปุ่มค้นหา
+        phone_input_frame = ctk.CTkFrame(member_frame, fg_color="transparent")
+        phone_input_frame.pack(fill="x", padx=10, pady=5)
+        
+        self.member_phone_entry = ctk.CTkEntry(phone_input_frame, placeholder_text="ใส่เบอร์โทรศัพท์เพื่อค้นหาลูกค้า", font=("Kanit", 11))
+        self.member_phone_entry.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        self.member_phone_entry.bind("<Return>", self.lookup_customer_by_phone)
+        
+        btn_search_member = ctk.CTkButton(phone_input_frame, text="🔍 ค้นหา", command=self.lookup_customer_by_phone,
+                                         font=("Kanit", 10), width=70, height=32)
+        btn_search_member.pack(side="right")
+        
+        # แสดงข้อมูลลูกค้า
+        self.lbl_customer_info = ctk.CTkLabel(member_frame, text="ยังไม่พบข้อมูลลูกค้า", font=("Kanit", 10), text_color="gray")
+        self.lbl_customer_info.pack(anchor="w", padx=10, pady=5)
         
         # --- เพิ่มส่วนโค้ตส่วนลดลงฝั่งซ้าย ---
         ctk.CTkLabel(left_frame, text="ตัวเลือกชำระเงิน", font=("Kanit", 16, "bold")).pack(pady=(20, 10))
@@ -834,29 +859,32 @@ objShell.MinimizeAll()
         self.update_cart_ui()
 
     def check_used_coupons(self):
-        """ตรวจสอบโค้ตที่เคยใช้แล้ว - ตรวจสอบจาก column 8 (used_coupon) เท่านั้น
+        """ตรวจสอบโค้ตที่เคยใช้แล้ว - ตรวจสอบจาก column 10 (UsedCoupon) เท่านั้น
         
-        โครงสร้าง Google Sheet (Sales) - 11 columns:
+        โครงสร้าง Google Sheet (Sales) - 14 columns (อัพเดท):
         Index 0: ReceiptID (column 1)
         Index 1: Date (column 2)
-        Index 2: Barcode (column 3)
-        Index 3: Name (column 4)
-        Index 4: Qty (column 5)
-        Index 5: UnitPrice (column 6)
-        Index 6: Total (column 7)
-        Index 7: used_coupon (column 8) ← ตรวจสอบที่นี่ (โค้ตที่ใช้ไปแล้ว)
-        Index 8: discount_amount (column 9)
-        Index 9: payment_method (column 10)
-        Index 10: received_coupon (column 11) ← ข้ามนี้ (โค้ตที่ได้รับเป็นส่วนลด)
+        Index 2: CustomerPhone (column 3) ← NEW
+        Index 3: CustomerName (column 4) ← NEW
+        Index 4: Barcode (column 5)
+        Index 5: Name (column 6)
+        Index 6: Qty (column 7)
+        Index 7: UnitPrice (column 8)
+        Index 8: Total (column 9)
+        Index 9: UsedCoupon (column 10) ← ตรวจสอบที่นี่ (โค้ตที่ใช้ไปแล้ว)
+        Index 10: DiscountAmount (column 11)
+        Index 11: PaymentMethod (column 12)
+        Index 12: ReceivedCoupon (column 13) ← ข้ามนี้ (โค้ตที่ได้รับเป็นส่วนลด)
+        Index 13: Cancel (column 14)
         
-        Note: Column 11 (received_coupon) = โค้ตที่ลูกค้าได้รับมา ไม่ใช่โค้ตที่ใช้ไปแล้ว
+        Note: Column 13 (ReceivedCoupon) = โค้ตที่ลูกค้าได้รับมา ไม่ใช่โค้ตที่ใช้ไปแล้ว
         """
         used_coupons = set()
         try:
             # ลองใช้ self.sheet_sales ถ้าไม่ได้ก็ลองใช้ self.worksheet
             sheet = self.sheet_sales if hasattr(self, 'sheet_sales') and self.sheet_sales else self.worksheet
             if not sheet:
-                print("❌ No sheet available")
+                print("❌ ไม่มี sheet ที่ใช้ได้")
                 return used_coupons
             
             records = sheet.get_all_values()
@@ -868,15 +896,15 @@ objShell.MinimizeAll()
                     if not row or all(cell.strip() == "" for cell in row):
                         continue
                     
-                    # ตรวจสอบ index 7 = column 8 (used_coupon) เท่านั้น
-                    if len(row) > 7 and row[7]:
-                        coupon = row[7].strip()
+                    # ตรวจสอบ index 9 = column 10 (UsedCoupon) เท่านั้น
+                    if len(row) > 9 and row[9]:
+                        coupon = row[9].strip()
                         if coupon and coupon.upper() not in ["-", "", "NONE"]:
                             coupon_upper = coupon.upper()
                             used_coupons.add(coupon_upper)
             
         except Exception as e:
-            print(f"❌ ERROR in check_used_coupons: {e}")
+            print(f"❌ ข้อผิดพลาดในการตรวจสอบโค้ต: {e}")
             import traceback
             traceback.print_exc()
         
@@ -898,41 +926,65 @@ objShell.MinimizeAll()
             # เฉพาะถ้าเป็น "DISC10-XXXXX", "SPECIAL", "DISCXX" หรือ custom code ที่ไม่เป็นตัวเลขเพียงอย่างเดียว
             used_coupons = self.check_used_coupons()
             
+            # ตรวจสอบรูปแบบโค้ต
+            is_valid_code = False
+            discount_percent = 0
+            
             if discount_code in used_coupons:
                 # โค้ตนี้เคยใช้แล้ว
                 coupon_status = "✗ ใช้แล้ว"
                 status_color = "#E74C3C"
                 discount_amount = 0.0
                 is_used_coupon = True
+                is_valid_code = True
                 if discount_code != self.last_coupon_checked:
                     show_warning = True
                     self.last_coupon_checked = discount_code
             
             elif discount_code.startswith("DISC10"):
                 # DISC10 ยังไม่เคยใช้
+                is_valid_code = True
+                discount_percent = 10
                 discount_amount = total_amount * 0.10
-                coupon_status = "✓ DISC10"
+                coupon_status = "✓ DISC10 (ลด 10%)"
+            
+            elif discount_code.startswith("DISC15"):
+                # DISC15
+                is_valid_code = True
+                discount_percent = 15
+                discount_amount = total_amount * 0.15
+                coupon_status = "✓ DISC15 (ลด 15%)"
+            
+            elif discount_code.startswith("DISC20"):
+                # DISC20
+                is_valid_code = True
+                discount_percent = 20
+                discount_amount = total_amount * 0.20
+                coupon_status = "✓ DISC20 (ลด 20%)"
             
             elif discount_code == "SPECIAL":
                 # SPECIAL ยังไม่เคยใช้
+                is_valid_code = True
+                discount_percent = 15
                 discount_amount = total_amount * 0.15
-                coupon_status = "✓ SPECIAL"
+                coupon_status = "✓ SPECIAL (ลด 15%)"
             
             elif discount_code.startswith("DISC"):
-                # DISCXX format
+                # DISCXX format อื่นๆ
                 try:
                     percent = int(discount_code.split("-")[0].replace("DISC", ""))
                     discount_amount = total_amount * (percent / 100)
-                    coupon_status = f"✓ DISC{percent}"
+                    coupon_status = f"✓ DISC{percent} (ลด {percent}%)"
+                    is_valid_code = True
                 except:
                     discount_amount = 0.0
-                    coupon_status = "✗ ไม่ถูกต้อง"
+                    coupon_status = "✗ รูปแบบไม่ถูกต้อง"
                     status_color = "#E74C3C"
             
             else:
                 # โค้ตที่ไม่รู้จัก
-                coupon_status = "⚠ ไม่รู้จัก"
-                status_color = "#F39C12"
+                coupon_status = "✗ โค้ตไม่ถูกต้อง"
+                status_color = "#E74C3C"
                 discount_amount = 0.0
                 self.last_coupon_checked = discount_code
         
@@ -966,17 +1018,14 @@ objShell.MinimizeAll()
                 f"กรุณาตรวจสอบโค้ตของลูกค้าอีกครั้ง"
             ))
         
-        # ปิดใช้งานปุ่ม checkout ถ้ามีโค้ตที่ใช้แล้ว
+        # ปิดใช้งานปุ่ม checkout เฉพาะถ้ามีโค้ตที่ใช้แล้ว (เปิดให้เลือกโค้ตก่อนเพิ่มสินค้า)
         if is_used_coupon:
             self.btn_checkout.configure(state="disabled", text="❌ ไม่สามารถใช้โค้ตนี้ได้")
-        elif self.cart_items:
-            self.btn_checkout.configure(state="normal", text="💰 ชำระเงิน / ตัดสต็อก")
         else:
-            self.btn_checkout.configure(state="disabled", text="💰 ชำระเงิน / ตัดสต็อก")
+            self.btn_checkout.configure(state="normal", text="💰 ชำระเงิน / ตัดสต็อก")
 
     def process_checkout(self):
         if not self.cart_items:
-            messagebox.showwarning("เตือน", "ไม่มีสินค้าในตะกร้า")
             return
         total_amount = self.update_cart_ui()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -992,6 +1041,34 @@ objShell.MinimizeAll()
                     f"กรุณาตรวจสอบโค้ตอีกครั้ง")
                 self.discount_code_entry.delete(0, "end")
                 return
+            
+            # ตรวจสอบรูปแบบโค้ตว่า valid หรือไม่
+            is_valid = False
+            if coupon_code.startswith("DISC10") or coupon_code.startswith("DISC15") or \
+               coupon_code.startswith("DISC20") or coupon_code == "SPECIAL" or \
+               coupon_code.startswith("DISC"):
+                try:
+                    if coupon_code.startswith("DISC"):
+                        # ทดลองแยก percent
+                        percent = int(coupon_code.split("-")[0].replace("DISC", ""))
+                        if 0 < percent <= 100:
+                            is_valid = True
+                    elif coupon_code == "SPECIAL":
+                        is_valid = True
+                except:
+                    is_valid = False
+            
+            if not is_valid:
+                messagebox.showerror("❌ โค้ตไม่ถูกต้อง", 
+                    f"โค้ต '{coupon_code}' ไม่ถูกต้อง\n\n"
+                    f"รูปแบบที่ถูกต้อง:\n"
+                    f"• DISC10-XXXX (ลด 10%)\n"
+                    f"• DISC15-XXXX (ลด 15%)\n"
+                    f"• DISC20-XXXX (ลด 20%)\n"
+                    f"• SPECIAL (ลด 15%)\n\n"
+                    f"กรุณาตรวจสอบโค้ตอีกครั้ง")
+                self.discount_code_entry.delete(0, "end")
+                return
         
         # คำนวณยอดส่วนลด
         discount_amount = 0.0
@@ -1002,6 +1079,10 @@ objShell.MinimizeAll()
             used_coupon = coupon_code
             if coupon_code.startswith("DISC10"):
                 discount_amount = total_amount * 0.10
+            elif coupon_code.startswith("DISC15"):
+                discount_amount = total_amount * 0.15
+            elif coupon_code.startswith("DISC20"):
+                discount_amount = total_amount * 0.20
             elif coupon_code == "SPECIAL":
                 discount_amount = total_amount * 0.15
             elif coupon_code.startswith("DISC"):
@@ -1013,7 +1094,7 @@ objShell.MinimizeAll()
         
         # ตรวจสอบว่าลูกค้าได้รับโค้ตใหม่หรือไม่ (ซื้อครบ 200 บาท)
         final_amount = total_amount - discount_amount
-        if final_amount >= 200:
+        if final_amount >= 500:
             received_coupon = f"DISC10-{datetime.now().strftime('%M%S')}"
         
         self.btn_checkout.configure(state="disabled", text="กำลังบันทึก...")
@@ -1027,13 +1108,18 @@ objShell.MinimizeAll()
             sales_rows = []
             items_for_receipt = []  # เก็บข้อมูลสินค้าสำหรับใบเสร็จ
             
+            # ดึงข้อมูลลูกค้า (ถ้ามี)
+            customer_phone = ""
+            customer_name = ""
+            if hasattr(self, 'current_customer_phone') and self.current_customer_phone:
+                customer_phone = self.current_customer_phone
+                if hasattr(self, 'current_customer') and self.current_customer:
+                    customer_name = self.current_customer.get('FullName', '')
+            
             for item in self.cart_items:
-                # คอลัมน์ที่ 7: โค้ตที่ใช้สำหรับส่วนลด
-                # คอลัมน์ที่ 8: ยอดส่วนลด
-                # คอลัมน์ที่ 9: วิธีการจ่าย
-                # คอลัมน์ที่ 10: โค้ตที่ได้รับ
-                # คอลัมน์ที่ 11: สถานะการยกเลิก (Cancel)
-                row = [receipt_id, timestamp, item['barcode'], item['name'], 
+                # โครงสร้าง: ReceiptID, Date, CustomerPhone, CustomerName, Barcode, Name, Qty, UnitPrice, Total, UsedCoupon, DiscountAmount, PaymentMethod, ReceivedCoupon, Cancel
+                row = [receipt_id, timestamp, customer_phone, customer_name, 
+                       item['barcode'], item['name'], 
                        item['qty'], item['price'], item['total'], used_coupon, discount_amount, 
                        payment_method, received_coupon, "No"]  # "No" สำหรับ Cancel column
                 sales_rows.append(row)
@@ -1048,8 +1134,8 @@ objShell.MinimizeAll()
             
             self.sheet_sales.append_rows(sales_rows)
             for item in self.cart_items:
-                # ไม่ลดสต็อกสำหรับรายการแบบ manual (barcode เริ่มต้นด้วย MANUAL-)
-                if item['barcode'].startswith('MANUAL-'):
+                # ไม่ลดสต็อกสำหรับรายการแบบ manual (barcode เริ่มต้นด้วย Sevice-)
+                if item['barcode'].startswith('Sevice-'):
                     continue
                 current_qty_cell = self.sheet_products.cell(int(item['row_idx']), 8).value
                 current_qty = int(current_qty_cell) if current_qty_cell else 0
@@ -1080,7 +1166,6 @@ objShell.MinimizeAll()
         self.play_sound("success")
         self.load_inventory_data()
         if received_coupon: self.show_coupon_qr(received_coupon)
-        else: messagebox.showinfo("สำเร็จ", "บันทึกรายการขายเรียบร้อย")
 
     def show_coupon_qr(self, code):
         if not self.app_running: return
@@ -1882,16 +1967,20 @@ objShell.MinimizeAll()
             
             if len(records) > 1:
                 for row in records[1:]:
-                    if len(row) >= 7:
+                    if len(row) >= 9:  # ต้องมีอย่างน้อย 9 column
                         rec_id = row[0]
                         date_str = row[1]
+                        customer_phone = row[2] if len(row) > 2 else ''  # NEW: CustomerPhone
+                        customer_name = row[3] if len(row) > 3 else ''   # NEW: CustomerName
                         
                         if rec_id not in self.sales_history_data:
-                            # ดึงค่า payment_method (column 9 = index 9)
-                            payment_method = row[9] if len(row) > 9 and row[9] else '-'
+                            # ดึงค่า payment_method (column 12 = index 11)
+                            payment_method = row[11] if len(row) > 11 and row[11] else '-'
                             
                             self.sales_history_data[rec_id] = {
                                 'date': date_str,
+                                'customer_phone': customer_phone,  # เบอร์โทรลูกค้า
+                                'customer_name': customer_name,    # ชื่อลูกค้า
                                 'items': [],
                                 'total_bill': 0.0,
                                 'discount_total': 0.0,
@@ -1899,46 +1988,46 @@ objShell.MinimizeAll()
                                 'payment_method': payment_method,  # ประเภทการจ่าย
                                 'coupon_used': '-',      # โค้ตที่ใช้สำหรับส่วนลด
                                 'coupon_received': '-',  # โค้ตที่ได้รับ
-                                'is_cancelled': False  # สถานะการยกเลิก (จะอัปเดตในส่วน try)
+                                'is_cancelled': False  # สถานะการยกเลิก
                             }
                         
                         try:
-                            barcode = row[2]
-                            qty = int(row[4])
-                            price = float(row[5])
-                            total = float(row[6].replace(",", ""))
+                            barcode = row[4]                    # Barcode (column 5)
+                            item_name = row[5]                  # Name (column 6)
+                            qty = int(row[6])                   # Qty (column 7)
+                            price = float(row[7])               # UnitPrice (column 8)
+                            total = float(str(row[8]).replace(",", ""))  # Total (column 9)
                             
-                            # ดึงค่าโค้ตที่ใช้ (column 8 = index 7)
-                            coupon_used = row[7] if len(row) > 7 and row[7] else '-'
+                            # ดึงค่าโค้ตที่ใช้ (column 10 = index 9)
+                            coupon_used = row[9] if len(row) > 9 and row[9] else '-'
                             self.sales_history_data[rec_id]['coupon_used'] = coupon_used
                             
-                            # ดึงค่าส่วนลด (column 9 = index 8)
+                            # ดึงค่าส่วนลด (column 11 = index 10)
                             discount_amount = 0.0
-                            if len(row) > 8:
+                            if len(row) > 10:
                                 try:
-                                    discount_amount = float(row[8]) if row[8] else 0.0
+                                    discount_amount = float(row[10]) if row[10] else 0.0
                                 except:
                                     discount_amount = 0.0
                             
-                            # ดึงค่า payment_method (column 10 = index 9)
-                            payment_method = row[9] if len(row) > 9 and row[9] else '-'
+                            # ดึงค่า payment_method (column 12 = index 11)
+                            payment_method = row[11] if len(row) > 11 and row[11] else '-'
                             self.sales_history_data[rec_id]['payment_method'] = payment_method
                             
-                            # ดึงค่าโค้ตที่ได้รับ (column 11 = index 10)
-                            coupon_received = row[10] if len(row) > 10 and row[10] else '-'
+                            # ดึงค่าโค้ตที่ได้รับ (column 13 = index 12)
+                            coupon_received = row[12] if len(row) > 12 and row[12] else '-'
                             self.sales_history_data[rec_id]['coupon_received'] = coupon_received
                             
-                            # ดึงค่า is_cancelled (column 12 = index 11) - ตรวจสอบว่า "Yes" หรือไม่
+                            # ดึงค่า is_cancelled (column 14 = index 13) - ตรวจสอบว่า "Yes" หรือไม่
                             is_cancelled = False
-                            if len(row) > 11 and row[11]:
-                                cancel_value = row[11].strip().lower()
+                            if len(row) > 13 and row[13]:
+                                cancel_value = row[13].strip().lower()
                                 is_cancelled = cancel_value == 'yes'
-                                print(f"DEBUG: Receipt {rec_id}, Cancel column value: '{row[11]}', is_cancelled: {is_cancelled}")
                             self.sales_history_data[rec_id]['is_cancelled'] = is_cancelled
                             
                             self.sales_history_data[rec_id]['items'].append({
                                 'barcode': barcode,
-                                'name': row[3],
+                                'name': item_name,
                                 'qty': qty,
                                 'price': price,
                                 'total': total,
@@ -1959,7 +2048,7 @@ objShell.MinimizeAll()
             if self.app_running and self.winfo_exists():
                 self.after(0, self.update_history_ui)
         except Exception as e:
-            print(f"History Load Error: {e}")
+            print(f"ข้อผิดพลาดในการโหลดประวัติ: {e}")
 
     def update_history_ui(self):
         for i in self.tree_receipts.get_children(): self.tree_receipts.delete(i)
@@ -2094,7 +2183,6 @@ objShell.MinimizeAll()
                     # สร้างใบเสร็จใหม่
                     self.generate_receipt_pdf(r_id, timestamp, items, total_bill, discount_amount, 
                                             final_total, payment_method, used_coupon, received_coupon)
-                    messagebox.showinfo("สร้างใบเสร็จ", f"สร้างใบเสร็จ {r_id} เรียบร้อย")
                     pdf_path = os.path.join(self.receipts_folder, f"{r_id}.pdf")
                 except Exception as e:
                     messagebox.showerror("ผิดพลาด", f"เกิดข้อผิดพลาดในการสร้างใบเสร็จ: {e}")
@@ -2116,12 +2204,15 @@ objShell.MinimizeAll()
         try:
             records = self.sheet_sales.get_all_values()
             
-            # หาแถวที่มี ReceiptID เท่ากับ r_id และอัปเดต column 12 (Cancel) เป็น "Yes"
+            # หาแถวที่มี ReceiptID เท่ากับ r_id และอัปเดต column 14 (Cancel) เป็น "Yes"
+            # Column ใหม่: 1=ReceiptID, 2=Date, 3=CustomerPhone, 4=CustomerName, 5=Barcode, 6=Name, 
+            #             7=Qty, 8=UnitPrice, 9=Total, 10=UsedCoupon, 11=DiscountAmount, 12=PaymentMethod,
+            #             13=ReceivedCoupon, 14=Cancel
             updated = False
             for row_idx, row in enumerate(records, start=1):  # row_idx เริ่มจาก 1 (header อยู่ที่ 1)
                 if len(row) > 0 and row[0] == r_id:
-                    # อัปเดต column 12 (L) = Cancel column (index 11)
-                    self.sheet_sales.update_cell(row_idx, 12, "Yes")  # column 12 = Cancel
+                    # อัปเดต column 14 (N) = Cancel column
+                    self.sheet_sales.update_cell(row_idx, 14, "Yes")  # column 14 = Cancel
                     updated = True
             
             if updated:
@@ -2132,7 +2223,7 @@ objShell.MinimizeAll()
                     # อัปเดต UI ทันที
                     self.after(0, self.update_history_ui)
                     # แสดง message หลังจาก 500ms
-                    self.after(500, lambda: messagebox.showinfo("สำเร็จ", f"ยกเลิกใบเสร็จ {r_id} เรียบร้อย"))
+                    self.after(500, lambda: messagebox.showinfo("สำเร็จ", f"ยกเลิกใบเสร็จ {r_id} เรียบร้อยแล้ว"))
                     # รีเฟรชการแสดงผลรายละเอียดหลังปิด dialog
                     self.after(1500, self.refresh_receipt_detail)
             else:
@@ -2140,7 +2231,7 @@ objShell.MinimizeAll()
                     self.after(0, lambda: messagebox.showerror("ผิดพลาด", f"ไม่พบใบเสร็จ {r_id}"))
         
         except Exception as e:
-            print(f"Error cancelling receipt: {e}")
+            print(f"ข้อผิดพลาดในการยกเลิกใบเสร็จ: {e}")
             if self.app_running and self.winfo_exists():
                 self.after(0, lambda: messagebox.showerror("ผิดพลาด", f"เกิดข้อผิดพลาด: {e}"))
     
@@ -2249,8 +2340,690 @@ objShell.MinimizeAll()
         self.tree_receipts.tag_configure('cancelled', foreground='#E74C3C')
 
     # =========================================
-    # TAB 4: DASHBOARD Logic
+    # TAB 4: CUSTOMERS Logic
     # =========================================
+    def setup_customers_tab(self):
+        """แท็บสำหรับจัดการข้อมูลลูกค้า"""
+        main_frame = ctk.CTkFrame(self.tab_customers, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # ส่วนค้นหา
+        search_frame = ctk.CTkFrame(main_frame, fg_color="gray25")
+        search_frame.pack(fill="x", pady=10, padx=10)
+        
+        ctk.CTkLabel(search_frame, text="🔍 ค้นหาลูกค้า:", font=("Kanit", 12, "bold")).pack(side="left", padx=10, pady=10)
+        
+        self.customer_search_entry = ctk.CTkEntry(search_frame, placeholder_text="ค้นหาจากเบอร์โทร, ชื่อ, หรือทะเบียนรถ", font=("Kanit", 11), width=300)
+        self.customer_search_entry.pack(side="left", padx=5, pady=10)
+        self.customer_search_entry.bind("<KeyRelease>", lambda e: self.search_customers())
+        
+        btn_add_customer = ctk.CTkButton(search_frame, text="➕ เพิ่มลูกค้าใหม่", command=self.add_customer_dialog, 
+                                        font=("Kanit", 11), fg_color="#27AE60", hover_color="#1E8449")
+        btn_add_customer.pack(side="right", padx=10, pady=10)
+
+        # ส่วนแสดงรายชื่อลูกค้า
+        columns = ("Phone", "FullName", "Nickname", "Vehicle", "LicensePlate", "LastVisit", "TotalSpent")
+        self.customers_tree = ttk.Treeview(main_frame, columns=columns, show="headings", height=15)
+        
+        self.customers_tree.heading("Phone", text="เบอร์โทร")
+        self.customers_tree.column("Phone", width=90, anchor="center")
+        self.customers_tree.heading("FullName", text="ชื่อ-นามสกุล")
+        self.customers_tree.column("FullName", width=120, stretch=True, anchor="center")
+        self.customers_tree.heading("Nickname", text="ชื่อเล่น")
+        self.customers_tree.column("Nickname", width=80, anchor="center")
+        self.customers_tree.heading("Vehicle", text="ยี่ห้อ/รุ่น")
+        self.customers_tree.column("Vehicle", width=120, stretch=True, anchor="center")
+        self.customers_tree.heading("LicensePlate", text="ทะเบียน")
+        self.customers_tree.column("LicensePlate", width=80, anchor="center")
+        self.customers_tree.heading("LastVisit", text="ครั้งล่าสุด")
+        self.customers_tree.column("LastVisit", width=90, anchor="center")
+        self.customers_tree.heading("TotalSpent", text="ยอดสะสม")
+        self.customers_tree.column("TotalSpent", width=80, anchor="center")
+        
+        self.customers_tree.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Bind double-click to edit
+        self.customers_tree.bind("<Double-1>", self.edit_customer_dialog)
+        
+        # ส่วนปุ่มควบคุม
+        btn_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=10, pady=10)
+        
+        btn_edit = ctk.CTkButton(btn_frame, text="✎ แก้ไข", command=self.edit_customer_dialog, font=("Kanit", 11))
+        btn_edit.pack(side="left", padx=5)
+        
+        btn_delete = ctk.CTkButton(btn_frame, text="🗑️ ลบ", command=self.delete_customer, 
+                                  font=("Kanit", 11), fg_color="#E74C3C", hover_color="#C0392B")
+        btn_delete.pack(side="left", padx=5)
+        
+        btn_view_coupons = ctk.CTkButton(btn_frame, text="🎟️ ดูโค้ต", command=self.view_customer_coupons, font=("Kanit", 11))
+        btn_view_coupons.pack(side="left", padx=5)
+        
+        btn_refresh = ctk.CTkButton(btn_frame, text="🔄 รีเฟรช", command=self.load_customers_data, font=("Kanit", 11))
+        btn_refresh.pack(side="left", padx=5)
+        
+        # โหลดข้อมูลลูกค้า
+        threading.Thread(target=self.load_customers_data, daemon=True).start()
+
+    def load_customers_data(self):
+        """โหลดข้อมูลลูกค้าจาก Google Sheet และคำนวณยอดสะสมจาก Sales Sheet"""
+        try:
+            if not hasattr(self, 'sheet_customers') or self.sheet_customers is None:
+                return
+            
+            all_records = self.sheet_customers.get_all_records()
+            # ใช้ normalize_phone เป็น key เพื่อให้สามารถค้นหาได้ถูกต้อง
+            self.customers_data = {}
+            for record in all_records:
+                if record.get('Phone'):
+                    normalized_phone = self._normalize_phone(record['Phone'])
+                    self.customers_data[normalized_phone] = record
+            
+            # คำนวณยอดสะสมจาก Sales Sheet
+            sales_data = {}  # dict เก็บ phone -> total spent
+            if hasattr(self, 'sheet_sales') and self.sheet_sales:
+                sales_records = self.sheet_sales.get_all_values()
+                for row in sales_records[1:]:  # ข้าม header
+                    if len(row) < 11:
+                        continue
+                    cell_phone = row[2]  # Column 3 = CustomerPhone (index 2)
+                    cell_price = row[8]  # Column 8 = UnitPrice (index 7)
+                    cell_discount = row[10]  # Column 11 = DiscountAmount (index 10)
+                    
+                    normalized_phone = self._normalize_phone(cell_phone)
+                    if normalized_phone:
+                        try:
+                            price = float(cell_price) if cell_price else 0
+                            discount = float(cell_discount) if cell_discount else 0
+                            net_amount = price - discount
+                            if normalized_phone not in sales_data:
+                                sales_data[normalized_phone] = 0
+                            sales_data[normalized_phone] += net_amount
+                        except:
+                            pass
+            
+            # แสดงในตาราง
+            for item in self.customers_tree.get_children():
+                self.customers_tree.delete(item)
+            
+            for phone, data in self.customers_data.items():
+                # แสดงเบอร์โทรแบบปกติ (0 + 9 หลัก)
+                display_phone = self._format_display_phone(data.get('Phone', ''))
+                # ดึงยอดสะสมจาก sales_data
+                total_spent_num = sales_data.get(phone, 0)
+                
+                self.customers_tree.insert("", "end", values=(
+                    display_phone,
+                    data.get('FullName', ''),
+                    data.get('Nickname', ''),
+                    data.get('Vehicle', ''),
+                    data.get('LicensePlate', ''),
+                    data.get('LastVisit', ''),
+                    f"{total_spent_num:,.2f}"
+                ))
+        except Exception as e:
+            print(f"Error loading customers: {e}")
+
+    def search_customers(self):
+        """ค้นหาลูกค้า"""
+        search_text = self.customer_search_entry.get().strip().lower()
+        
+        for item in self.customers_tree.get_children():
+            self.customers_tree.delete(item)
+        
+        if not hasattr(self, 'customers_data'):
+            return
+        
+        for phone, data in self.customers_data.items():
+            if (search_text in phone.lower() or 
+                search_text in data.get('FullName', '').lower() or
+                search_text in data.get('LicensePlate', '').lower()):
+                self.customers_tree.insert("", "end", values=(
+                    data.get('Phone', ''),
+                    data.get('FullName', ''),
+                    data.get('Nickname', ''),
+                    data.get('Vehicle', ''),
+                    data.get('LicensePlate', ''),
+                    data.get('LastVisit', ''),
+                    data.get('TotalSpent', '0')
+                ))
+
+    def add_customer_dialog(self):
+        """เปิด dialog เพิ่มลูกค้าใหม่"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("เพิ่มลูกค้าใหม่")
+        dialog.geometry("500x600")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        
+        # ScrollableFrame เพื่อให้ form ยาว
+        scroll_frame = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=15, pady=15)
+        
+        # ข้อมูลส่วนตัว
+        ctk.CTkLabel(scroll_frame, text="ข้อมูลส่วนตัว", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(10, 5))
+        
+        ctk.CTkLabel(scroll_frame, text="ชื่อ-นามสกุล (จำเป็น):", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_fullname = ctk.CTkEntry(scroll_frame, placeholder_text="เช่น สมชาย ใจดี", font=("Kanit", 11))
+        entry_fullname.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="ชื่อเล่น:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_nickname = ctk.CTkEntry(scroll_frame, placeholder_text="เช่น ช่าง ฉี", font=("Kanit", 11))
+        entry_nickname.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="วันเกิด:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        birthday_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
+        birthday_frame.pack(fill="x", padx=10, pady=(0, 10))
+        date_picker_birthday = DateEntry(birthday_frame, width=20, font=("Kanit", 11), locale='th_TH')
+        date_picker_birthday.pack(side="left", fill="x", expand=True)
+        
+        # ข้อมูลการติดต่อ
+        ctk.CTkLabel(scroll_frame, text="ข้อมูลการติดต่อ", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(20, 5))
+        
+        ctk.CTkLabel(scroll_frame, text="เบอร์โทรศัพท์ (จำเป็น):", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_phone = ctk.CTkEntry(scroll_frame, placeholder_text="เช่น 0867834944 หรือ 867834944", font=("Kanit", 11))
+        entry_phone.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="ที่อยู่/พิกัดสวน:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_address = ctk.CTkEntry(scroll_frame, placeholder_text="เช่น ต.หนองจ่าง อ.เมือง จ.นครสวรรค์", font=("Kanit", 11))
+        entry_address.pack(fill="x", padx=10, pady=(0, 10))
+        
+        # ข้อมูลยานพาหนะ
+        ctk.CTkLabel(scroll_frame, text="ข้อมูลยานพาหนะ", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(20, 5))
+        
+        ctk.CTkLabel(scroll_frame, text="ยี่ห้อ/รุ่นรถมอเตอร์ไซค์:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_vehicle = ctk.CTkEntry(scroll_frame, placeholder_text="เช่น Honda Wave 110i ปี 2022", font=("Kanit", 11))
+        entry_vehicle.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="ทะเบียนรถ:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_license = ctk.CTkEntry(scroll_frame, placeholder_text="เช่น ลง.1234", font=("Kanit", 11))
+        entry_license.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="หมายเหตุ:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_notes = ctk.CTkTextbox(scroll_frame, height=60, font=("Kanit", 10))
+        entry_notes.pack(fill="x", padx=10, pady=(0, 15))
+        
+        # ปุ่มบันทึก
+        def save_customer():
+            fullname = entry_fullname.get().strip()
+            phone = entry_phone.get().strip()
+            
+            if not fullname or not phone:
+                messagebox.showwarning("ข้อมูลไม่ครบ", "กรุณาใส่ชื่อและเบอร์โทรศัพท์")
+                return
+            
+            try:
+                # สร้าง CustomerID
+                customer_id = f"CUST-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                
+                # Normalize เบอร์โทร
+                normalized_phone = self._normalize_phone(phone)
+                
+                # บันทึกลงใน Google Sheet (ใช้ normalized phone)
+                self.sheet_customers.append_row([
+                    customer_id,
+                    fullname,
+                    entry_nickname.get().strip(),
+                    str(date_picker_birthday.get_date()),
+                    normalized_phone,
+                    entry_address.get().strip(),
+                    entry_vehicle.get().strip(),
+                    entry_license.get().strip(),
+                    datetime.now().strftime("%Y-%m-%d"),
+                    "0",
+                    "",
+                    entry_notes.get("1.0", "end").strip()
+                ])
+                
+                messagebox.showinfo("สำเร็จ", f"เพิ่มลูกค้า {fullname} สำเร็จแล้วครับ")
+                self.load_customers_data()
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถบันทึกข้อมูล: {e}")
+        
+        btn_save = ctk.CTkButton(scroll_frame, text="✓ บันทึก", command=save_customer, 
+                                font=("Kanit", 12), fg_color="#27AE60", hover_color="#1E8449")
+        btn_save.pack(fill="x", padx=10, pady=10)
+
+    def edit_customer_dialog(self, event=None):
+        """แก้ไขข้อมูลลูกค้า"""
+        selection = self.customers_tree.selection()
+        if not selection:
+            messagebox.showwarning("ไม่ได้เลือก", "กรุณาเลือกลูกค้าที่ต้องการแก้ไข")
+            return
+        
+        item = selection[0]
+        values = self.customers_tree.item(item)['values']
+        phone_display = values[0]
+        
+        # ค้นหาลูกค้าจากเบอร์โทรที่ normalize แล้ว
+        normalized_phone = self._normalize_phone(phone_display)
+        
+        if not hasattr(self, 'customers_data') or normalized_phone not in self.customers_data:
+            messagebox.showerror("ข้อผิดพลาด", "ไม่พบข้อมูลลูกค้า")
+            return
+        
+        customer = self.customers_data[normalized_phone]
+        
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("แก้ไขข้อมูลลูกค้า")
+        dialog.geometry("500x600")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        
+        scroll_frame = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=15, pady=15)
+        
+        # ข้อมูลส่วนตัว
+        ctk.CTkLabel(scroll_frame, text="ข้อมูลส่วนตัว", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(10, 5))
+        
+        ctk.CTkLabel(scroll_frame, text="ชื่อ-นามสกุล:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_fullname = ctk.CTkEntry(scroll_frame, font=("Kanit", 11))
+        entry_fullname.insert(0, customer.get('FullName', ''))
+        entry_fullname.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="ชื่อเล่น:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_nickname = ctk.CTkEntry(scroll_frame, font=("Kanit", 11))
+        entry_nickname.insert(0, customer.get('Nickname', ''))
+        entry_nickname.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="วันเกิด:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        birthday_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
+        birthday_frame.pack(fill="x", padx=10, pady=(0, 10))
+        
+        # Parse วันเกิดจาก string YYYY-MM-DD
+        birthday_str = customer.get('Birthday', '')
+        try:
+            birthday_date = datetime.strptime(birthday_str, "%Y-%m-%d").date() if birthday_str else datetime.now().date()
+        except:
+            birthday_date = datetime.now().date()
+        
+        date_picker_birthday = DateEntry(birthday_frame, width=20, font=("Kanit", 11), locale='th_TH')
+        date_picker_birthday.set_date(birthday_date)
+        date_picker_birthday.pack(side="left", fill="x", expand=True)
+        
+        # ข้อมูลการติดต่อ
+        ctk.CTkLabel(scroll_frame, text="ข้อมูลการติดต่อ", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(20, 5))
+        
+        ctk.CTkLabel(scroll_frame, text="เบอร์โทรศัพท์:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_phone = ctk.CTkEntry(scroll_frame, font=("Kanit", 11))
+        entry_phone.insert(0, customer.get('Phone', ''))
+        entry_phone.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="ที่อยู่:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_address = ctk.CTkEntry(scroll_frame, font=("Kanit", 11))
+        entry_address.insert(0, customer.get('Address', ''))
+        entry_address.pack(fill="x", padx=10, pady=(0, 10))
+        
+        # ข้อมูลยานพาหนะ
+        ctk.CTkLabel(scroll_frame, text="ข้อมูลยานพาหนะ", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(20, 5))
+        
+        ctk.CTkLabel(scroll_frame, text="ยี่ห้อ/รุ่น:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_vehicle = ctk.CTkEntry(scroll_frame, font=("Kanit", 11))
+        entry_vehicle.insert(0, customer.get('Vehicle', ''))
+        entry_vehicle.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="ทะเบียนรถ:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_license = ctk.CTkEntry(scroll_frame, font=("Kanit", 11))
+        entry_license.insert(0, customer.get('LicensePlate', ''))
+        entry_license.pack(fill="x", padx=10, pady=(0, 10))
+        
+        ctk.CTkLabel(scroll_frame, text="หมายเหตุ:", font=("Kanit", 11)).pack(anchor="w", padx=10)
+        entry_notes = ctk.CTkTextbox(scroll_frame, height=60, font=("Kanit", 10))
+        entry_notes.insert("1.0", customer.get('Notes', ''))
+        entry_notes.pack(fill="x", padx=10, pady=(0, 15))
+        
+        def update_customer():
+            try:
+                # Normalize เบอร์โทร
+                new_phone = self._normalize_phone(entry_phone.get().strip())
+                
+                # ค้นหาแถวและอัปเดต โดยใช้เบอร์โทรเก่า
+                all_records = self.sheet_customers.get_all_records()
+                row_num = None
+                for idx, record in enumerate(all_records, start=2):
+                    if self._normalize_phone(record.get('Phone', '')) == normalized_phone:
+                        row_num = idx
+                        break
+                
+                if row_num:
+                    # ใช้ update() แทน update_row() เพราะ gspread ไม่มี update_row method
+                    # Format: 'A2:L2' สำหรับ 12 columns (ตั้งแต่ A ถึง L)
+                    cell_range = f'A{row_num}:L{row_num}'
+                    self.sheet_customers.update(cell_range, [[
+                        customer.get('CustomerID', ''),
+                        entry_fullname.get().strip(),
+                        entry_nickname.get().strip(),
+                        str(date_picker_birthday.get_date()),
+                        new_phone,
+                        entry_address.get().strip(),
+                        entry_vehicle.get().strip(),
+                        entry_license.get().strip(),
+                        customer.get('LastVisit', ''),
+                        customer.get('TotalSpent', '0'),
+                        customer.get('AvailableCoupons', ''),
+                        entry_notes.get("1.0", "end").strip()
+                    ]])
+                    messagebox.showinfo("สำเร็จ", "อัปเดตข้อมูลลูกค้าสำเร็จแล้วครับ")
+                    self.load_customers_data()
+                    dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถอัปเดต: {e}")
+        
+        btn_update = ctk.CTkButton(scroll_frame, text="✓ อัปเดต", command=update_customer, 
+                                  font=("Kanit", 12), fg_color="#27AE60", hover_color="#1E8449")
+        btn_update.pack(fill="x", padx=10, pady=10)
+
+    def delete_customer(self):
+        """ลบลูกค้า"""
+        selection = self.customers_tree.selection()
+        if not selection:
+            messagebox.showwarning("ไม่ได้เลือก", "กรุณาเลือกลูกค้าที่ต้องการลบ")
+            return
+        
+        if messagebox.askyesno("ยืนยัน", "ต้องการลบลูกค้านี้หรือไม่?"):
+            try:
+                item = selection[0]
+                values = self.customers_tree.item(item)['values']
+                phone_display = values[0]
+                fullname = values[1]
+                
+                # Normalize เบอร์โทร
+                normalized_phone = self._normalize_phone(phone_display)
+                
+                # ค้นหาและลบแถว
+                all_records = self.sheet_customers.get_all_records()
+                for idx, record in enumerate(all_records, start=2):
+                    if self._normalize_phone(record.get('Phone', '')) == normalized_phone:
+                        self.sheet_customers.delete_row(idx)
+                        break
+                
+                messagebox.showinfo("สำเร็จ", f"ลบ {fullname} สำเร็จแล้วครับ")
+                self.load_customers_data()
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถลบข้อมูล: {e}")
+
+    def view_customer_coupons(self):
+        """ดูโค้ตที่ลูกค้าได้รับจาก Sales Sheet และเช็คว่าใช้ไปแล้วไหม"""
+        selection = self.customers_tree.selection()
+        if not selection:
+            messagebox.showwarning("ไม่ได้เลือก", "กรุณาเลือกลูกค้า")
+            return
+        
+        item = selection[0]
+        values = self.customers_tree.item(item)['values']
+        phone_display = values[0]
+        fullname = values[1]
+        
+        normalized_phone = self._normalize_phone(phone_display)
+        
+        if not hasattr(self, 'sheet_sales') or self.sheet_sales is None:
+            messagebox.showerror("ข้อผิดพลาด", "ไม่สามารถเข้าถึง Sales Sheet")
+            return
+        
+        # ดึงโค้ดที่ลูกค้าได้รับจาก Sales sheet
+        all_sales_records = self.sheet_sales.get_all_values()
+        received_coupons = set()  # โค้ตที่ลูกค้าได้รับ
+        
+        for row in all_sales_records[1:]:  # ข้าม header
+            if len(row) < 13:
+                continue
+            
+            cell_phone = row[2]  # Column 3 = CustomerPhone (index 2)
+            cell_received_coupon = row[12]  # Column 13 = ReceivedCoupon (index 12)
+            
+            record_phone = self._normalize_phone(cell_phone)
+            
+            # ค้นหาเบอร์โทรที่ match
+            if record_phone == normalized_phone:
+                if cell_received_coupon and cell_received_coupon.strip():
+                    received_coupons.add(cell_received_coupon.strip())
+        
+        if received_coupons:
+            # ตรวจสอบว่าโค้ตใดบ้างที่ใช้ไปแล้ว
+            used_coupons = self.check_used_coupons()
+            
+            # กรองออกเฉพาะโค้ตที่ยังใช้ได้
+            available_coupons = [coupon for coupon in sorted(list(received_coupons)) 
+                                if coupon not in used_coupons]
+            
+            if available_coupons:
+                coupon_text = "โค้ตที่สามารถใช้ได้:\n" + "\n".join([f"• {c} (ยังใช้ได้)" for c in available_coupons])
+            else:
+                coupon_text = "โค้ตทั้งหมดได้ใช้ไปแล้ว:\n" + "\n".join([f"✓ {c}" for c in sorted(list(received_coupons))])
+        else:
+            coupon_text = "ลูกค้าคนนี้ยังไม่มีโค้ตส่วนลด"
+        
+        messagebox.showinfo(f"โค้ตของ {fullname}", coupon_text)
+
+    def lookup_customer_by_phone(self, event=None):
+        """ค้นหาลูกค้าจากเบอร์โทรศัพท์ในแท็บ POS - ดึงโค้ตจากประวัติการซื้อ (Sales sheet)"""
+        phone = self.member_phone_entry.get().strip()
+        
+        if not phone:
+            self.lbl_customer_info.configure(text="ยังไม่พบข้อมูลลูกค้า", text_color="gray")
+            self.discount_code_entry.delete(0, "end")
+            self.current_customer = None
+            self.current_customer_phone = None
+            return
+        
+        try:
+            if not hasattr(self, 'sheet_sales') or self.sheet_sales is None:
+                return
+            
+            # Normalize เบอร์โทรที่ป้อน
+            normalized_input = self._normalize_phone(phone)
+            
+            # ดึงลิสต์โค้ตที่ใช้ไปแล้ว
+            used_coupons = self.check_used_coupons()
+            
+            # ค้นหาจาก Sales sheet: column 3 = CustomerPhone, column 10 = UsedCoupon
+            all_records = self.sheet_sales.get_all_values()
+            customer_name = ""
+            available_coupons = set()  # เก็บโค้ตที่ unique และยังไม่ได้ใช้
+            
+            for row in all_records[1:]:  # ข้ามหัวข้อ
+                if len(row) < 10:
+                    continue
+                
+                cell_phone = row[2]  # Column 3 = CustomerPhone (index 2)
+                cell_name = row[3]  # Column 4 = CustomerName (index 3)
+                cell_coupon = row[12]  # Column 10 = UsedCoupon (index 12)
+                
+                record_phone = self._normalize_phone(cell_phone)
+                
+                # ค้นหาเบอร์โทรที่ match
+                if record_phone == normalized_input:
+                    if cell_name:
+                        customer_name = cell_name
+                    # เพิ่มโค้ตเฉพาะที่ยังไม่ได้ใช้
+                    if cell_coupon and cell_coupon.strip():
+                        coupon_code = cell_coupon.strip()
+                        if coupon_code not in used_coupons:
+                            available_coupons.add(coupon_code)
+            
+            # หากค้นหาพบ
+            if customer_name or available_coupons:
+                display_name = customer_name if customer_name else "ลูกค้าอื่นๆ"
+                info_text = f"✓ {display_name}"
+                
+                # เก็บข้อมูลลูกค้าปัจจุบัน
+                self.current_customer_phone = phone
+                self.current_customer = {'FullName': customer_name}
+                
+                # อัปเดต LastVisit ในแท็บ Customers (ทำใน thread แยก)
+                threading.Thread(target=self.update_customer_last_visit, args=(normalized_input,), daemon=True).start()
+                
+                # ถ้ามีโค้ตที่ค้นพบ
+                if available_coupons:
+                    coupon_list = sorted(list(available_coupons))
+                    
+                    # ถ้ามีโค้ตเดียว ให้ auto-apply
+                    if len(coupon_list) == 1:
+                        first_coupon = coupon_list[0]
+                        self.discount_code_entry.delete(0, "end")
+                        self.discount_code_entry.insert(0, first_coupon)
+                        info_text += f"\n💳 โค้ต: {first_coupon} (ใช้อัตโนมัติ)"
+                        self.update_discount_display()
+                    else:
+                        # ถ้ามีหลายโค้ต ให้เลือก (ตัวกรองรอบนี้ลบไปแล้ว)
+                        self.show_coupon_selection_dialog(coupon_list)
+                        info_text += f"\n💳 พบโค้ต {len(coupon_list)} รายการ"
+                else:
+                    self.discount_code_entry.delete(0, "end")
+                    info_text += "\n(ยังไม่มีโค้ตให้ใช้)"
+                
+                self.lbl_customer_info.configure(text=info_text, text_color="#27AE60")
+                return
+            
+            self.lbl_customer_info.configure(text="ไม่พบลูกค้านี้ในระบบ กรุณาตรวจสอบเบอร์โทร", text_color="#E74C3C")
+            self.discount_code_entry.delete(0, "end")
+            self.current_customer = None
+        except Exception as e:
+            print(f"ข้อผิดพลาดในการค้นหาลูกค้า: {e}")
+            self.lbl_customer_info.configure(text="ข้อผิดพลาดในการค้นหา", text_color="#E74C3C")
+    
+    def get_coupon_description(self, coupon_code):
+        """ดึงข้อมูลละเอียดของโค้ตส่วนลด"""
+        code_upper = coupon_code.strip().upper()
+        
+        if code_upper.startswith("DISC10"):
+            return f"{coupon_code} (ลด 10%)"
+        elif code_upper.startswith("DISC15"):
+            return f"{coupon_code} (ลด 15%)"
+        elif code_upper.startswith("DISC20"):
+            return f"{coupon_code} (ลด 20%)"
+        elif code_upper == "SPECIAL":
+            return f"{coupon_code} (ลด 15%)"
+        elif code_upper.startswith("DISC"):
+            try:
+                percent = int(code_upper.split("-")[0].replace("DISC", ""))
+                return f"{coupon_code} (ลด {percent}%)"
+            except:
+                return coupon_code
+        else:
+            return coupon_code
+
+    def show_coupon_selection_dialog(self, coupon_list):
+        """แสดง dialog เลือกโค้ตโดยใช้ checkbox"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("เลือกโค้ตส่วนลด")
+        dialog.geometry("450x350")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        
+        # ชื่อ
+        ctk.CTkLabel(dialog, text="โค้ตที่ใช้ได้สำหรับลูกค้านี้:", font=("Kanit", 12, "bold")).pack(pady=10, padx=10)
+        
+        # Scrollable frame for checkboxes
+        scroll_frame = ctk.CTkScrollableFrame(dialog, fg_color="gray25")
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # ตัวแปรเก็บค่า checkbox
+        coupon_vars = {}
+        
+        for coupon in coupon_list:
+            var = ctk.BooleanVar(value=False)
+            coupon_vars[coupon] = var
+            
+            # แสดง detail ของโค้ต
+            display_text = self.get_coupon_description(coupon)
+            checkbox = ctk.CTkCheckBox(scroll_frame, text=display_text, variable=var, font=("Kanit", 11))
+            checkbox.pack(anchor="w", padx=10, pady=8)
+        
+        # ปุ่มเลือก
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=10, pady=15)
+        
+        def apply_selected():
+            """บันทึกโค้ตที่เลือก"""
+            selected_coupons = [code for code, var in coupon_vars.items() if var.get()]
+            
+            if not selected_coupons:
+                messagebox.showwarning("ไม่ได้เลือก", "กรุณาเลือกโค้ตที่ต้องการใช้")
+                return
+            
+            # ใช้โค้ตแรกที่เลือก
+            selected_coupon = selected_coupons[0]
+            self.discount_code_entry.delete(0, "end")
+            self.discount_code_entry.insert(0, selected_coupon)
+            self.update_discount_display()
+            
+            dialog.destroy()
+        
+        btn_ok = ctk.CTkButton(btn_frame, text="✓ ยืนยัน", command=apply_selected, 
+                              font=("Kanit", 12), fg_color="#27AE60", hover_color="#1E8449",
+                              height=40)
+        btn_ok.pack(fill="x", pady=5)
+        
+        btn_cancel = ctk.CTkButton(btn_frame, text="✕ ยกเลิก", command=dialog.destroy, 
+                                  font=("Kanit", 12), fg_color="#E74C3C", hover_color="#C0392B",
+                                  height=40)
+        btn_cancel.pack(fill="x", pady=5)
+
+    # =========================================
+    # TAB 5: DASHBOARD Logic
+    # =========================================
+    
+    def _normalize_phone(self, phone):
+        """ปรับเบอร์โทรให้เป็นรูปแบบมาตรฐาน (เอา 0 ออกข้างหน้า เหลือ 9 หลัก)
+        เช่น 0867834944 -> 867834944, 867834944 -> 867834944"""
+        if not phone:
+            return ""
+        # เอาเฉพาะตัวเลข
+        phone_digits = ''.join(filter(str.isdigit, str(phone)))
+        # ถ้าเริ่มต้นด้วย 0 ให้เอาออก
+        if phone_digits.startswith('0'):
+            phone_digits = phone_digits[1:]
+        return phone_digits
+    
+    def _format_display_phone(self, phone):
+        """แสดงเบอร์โทรแบบปกติ (0 + 9 หลัก)
+        เช่น 867834944 -> 0867834944"""
+        if not phone:
+            return ""
+        normalized = self._normalize_phone(phone)
+        if normalized and len(normalized) == 9:
+            return f"0{normalized}"
+        return phone
+    
+    def update_customer_last_visit(self, normalized_phone):
+        """อัปเดต LastVisit ในแท็บ Customers ด้วย timestamp ปัจจุบัน"""
+        try:
+            if not hasattr(self, 'sheet_customers') or self.sheet_customers is None:
+                return
+            
+            from datetime import datetime
+            
+            # ดึงเวลาปัจจุบันในรูปแบบ YYYY-MM-DD HH:MM:SS
+            current_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # ดึงข้อมูลลูกค้าจาก Customers sheet
+            all_records = self.sheet_customers.get_all_records()
+            
+            # หาตำแหน่ง column LastVisit ก่อน
+            cell_ref = self.sheet_customers.find('LastVisit')
+            if not cell_ref:
+                print("⚠️ ไม่พบช่อง LastVisit ในแถบ Customers")
+                return
+            
+            # ใช้ col และ row จาก cell_ref โดยตรง
+            col_number = cell_ref.col
+            
+            for idx, record in enumerate(all_records):
+                cell_phone = record.get('Phone', '')
+                normalized_cell_phone = self._normalize_phone(cell_phone)
+                
+                # ถ้าเบอร์โทรตรงกัน ให้อัปเดต LastVisit
+                if normalized_cell_phone == normalized_phone:
+                    row_number = idx + 2  # +1 for header, +1 for 1-based index
+                    # ใช้ update_cell() ซึ่งรับ (row, col, value) โดยตรง
+                    self.sheet_customers.update_cell(row_number, col_number, current_timestamp)
+                    print(f"✓ อัปเดต LastVisit สำหรับลูกค้า {self._format_display_phone(cell_phone)} เป็น {current_timestamp}")
+                    break
+        except Exception as e:
+            print(f"ข้อผิดพลาดในการอัปเดต LastVisit: {e}")
+    
     def setup_dashboard_tab(self):
         self.dash_frame = ctk.CTkFrame(self.tab_dashboard, fg_color="transparent")
         self.dash_frame.pack(fill="both", expand=True, padx=20, pady=20)
@@ -2264,15 +3037,17 @@ objShell.MinimizeAll()
         self.dashboard_filter.set("รายวัน")
         self.dashboard_filter.pack(side="left", padx=5, pady=5)
         
+        btn_refresh = ctk.CTkButton(filter_frame, text="🔄 รีเฟรชข้อมูล", command=self.update_dashboard, 
+                                   font=("Kanit", 12), height=35, border_width=2, border_color="#3498DB")
+        btn_refresh.pack(side="left", padx=10, pady=5)
+        
         kpi_frame = ctk.CTkFrame(self.dash_frame, fg_color="transparent")
         kpi_frame.pack(fill="x", pady=10)
         self.card_sales = self.create_kpi_card(kpi_frame, "ยอดขายรวม", "0.00 บาท", "#3498DB")
         self.card_sales.pack(side="left", fill="x", expand=True, padx=10)
         self.card_txn = self.create_kpi_card(kpi_frame, "จำนวนบิลที่ขาย", "0 บิล", "#E67E22")
         self.card_txn.pack(side="left", fill="x", expand=True, padx=10)
-        btn_refresh = ctk.CTkButton(self.dash_frame, text="🔄 รีเฟรชข้อมูล", command=self.update_dashboard, 
-                                   font=("Kanit", 16), height=40, border_width=2, border_color="#3498DB")
-        btn_refresh.pack(pady=10)
+        
         graph_frame = ctk.CTkFrame(self.dash_frame, fg_color="transparent")
         graph_frame.pack(fill="both", expand=True, pady=10)
         self.graph_left = ctk.CTkFrame(graph_frame)
@@ -2295,6 +3070,8 @@ objShell.MinimizeAll()
     def run_dashboard_calc(self):
         if not self.app_running: return
         try:
+            from datetime import datetime
+            
             records = self.sheet_sales.get_all_values()
             total_revenue = 0.0
             total_bills = set()
@@ -2302,22 +3079,30 @@ objShell.MinimizeAll()
             product_sales = defaultdict(int)
             
             filter_type = self.dashboard_filter.get() if hasattr(self, 'dashboard_filter') else "รายวัน"
+            today = datetime.now().strftime("%Y-%m-%d")
+            today_month = datetime.now().strftime("%Y-%m")
 
             if len(records) > 1:
                 for row in records[1:]:
-                    if len(row) >= 7:
+                    if len(row) >= 9:
                         full_date = row[1]
-                        date_str = full_date.split(" ")[0]
+                        date_str = full_date.split(" ")[0]  # YYYY-MM-DD
                         
-                        # สำหรับรายเดือน ให้ใช้ YYYY-MM
+                        # ตรวจสอบว่าข้อมูลตรงกับ filter ไหม
                         if filter_type == "รายเดือน":
+                            # กรอง: เอาเฉพาะเดือนปัจจุบัน
                             date_key = date_str[:7]  # YYYY-MM
-                        else:
+                            if date_key != today_month:
+                                continue  # ข้ามรายการที่ไม่ใช่เดือนนี้
+                        else:  # "รายวัน"
+                            # กรอง: เอาเฉพาะวันนี้
                             date_key = date_str
+                            if date_key != today:
+                                continue  # ข้ามรายการที่ไม่ใช่วันนี้
                         
-                        name = row[3]
+                        name = row[5]  # Index 5 = Name
                         rec_id = row[0]
-                        total_str = row[6]
+                        total_str = row[8]  # Index 8 = Total
                         if total_str != "-" and total_str.strip() != "":
                             try:
                                 amount = float(total_str.replace(",", ""))
@@ -2508,21 +3293,21 @@ objShell.MinimizeAll()
             
             if len(records) > 1:
                 for row in records[1:]:
-                    if len(row) >= 12:
+                    if len(row) >= 14:
                         rec_date = row[1].split(" ")[0]  # ดึงเฉพาะวันที่
                         
                         # ตรวจสอบว่าอยู่ในช่วงวันที่หรือไม่
                         if rec_date < date_from or rec_date > date_to:
                             continue
                         
-                        # ตรวจสอบว่ายกเลิกหรือไม่
-                        is_cancelled = row[11].strip().lower() == 'yes' if len(row) > 11 else False
+                        # ตรวจสอบว่ายกเลิกหรือไม่ (Index 13 = Cancel)
+                        is_cancelled = row[13].strip().lower() == 'yes' if len(row) > 13 else False
                         if is_cancelled:
                             cancelled_count += 1
                             continue
                         
-                        # คำนวณยอดขาย
-                        total_str = row[6]
+                        # คำนวณยอดขาย (Index 8 = Total)
+                        total_str = row[8]
                         try:
                             total = float(total_str) if total_str else 0.0
                         except:
@@ -2538,9 +3323,9 @@ objShell.MinimizeAll()
                         daily_sales[rec_date]["total"] += total
                         daily_sales[rec_date]["count"] += 1
                         
-                        # จำแนกตามสินค้า
-                        name = row[3]
-                        qty_str = row[4]
+                        # จำแนกตามสินค้า (Index 5 = Name, Index 6 = Qty)
+                        name = row[5]
+                        qty_str = row[6]
                         try:
                             qty = int(qty_str) if qty_str else 0
                         except:
@@ -2628,10 +3413,10 @@ objShell.MinimizeAll()
             
             if len(records) > 1:
                 for row in records[1:]:
-                    safe_row = (row + [""] * 12)[:12]
-                    receipt_id = safe_row[0]  # column 1 = ReceiptID
-                    rec_date = safe_row[1]    # column 2 = Date
-                    total_str = safe_row[6]   # column 7 = Total
+                    safe_row = (row + [""] * 14)[:14]
+                    receipt_id = safe_row[0]  # column 1 = ReceiptID (index 0)
+                    rec_date = safe_row[1]    # column 2 = Date (index 1)
+                    total_str = safe_row[8]   # column 9 = Total (index 8) - เปลี่ยนจาก row[6]
                     
                     if not rec_date or not receipt_id:
                         continue
@@ -2681,10 +3466,10 @@ objShell.MinimizeAll()
             
             if len(records) > 1:
                 for row in records[1:]:
-                    safe_row = (row + [""] * 12)[:12]
-                    receipt_id = safe_row[0]  # column 1 = ReceiptID
-                    rec_date = safe_row[1]    # column 2 = Date
-                    total_str = safe_row[6]   # column 7 = Total
+                    safe_row = (row + [""] * 14)[:14]
+                    receipt_id = safe_row[0]  # column 1 = ReceiptID (index 0)
+                    rec_date = safe_row[1]    # column 2 = Date (index 1)
+                    total_str = safe_row[8]   # column 9 = Total (index 8) - เปลี่ยนจาก row[6]
                     
                     if not rec_date or not receipt_id:
                         continue
@@ -2727,10 +3512,10 @@ objShell.MinimizeAll()
             
             if len(records) > 1:
                 for row in records[1:]:
-                    safe_row = (row + [""] * 10)[:10]
-                    name = safe_row[3]  # column 4 = Name
-                    qty_str = safe_row[4]  # column 5 = Qty
-                    total_str = safe_row[6]  # column 7 = Total
+                    safe_row = (row + [""] * 14)[:14]
+                    name = safe_row[5]  # column 6 = Name (index 5) - เปลี่ยนจาก row[3]
+                    qty_str = safe_row[6]  # column 7 = Qty (index 6) - เปลี่ยนจาก row[4]
+                    total_str = safe_row[8]  # column 9 = Total (index 8) - เปลี่ยนจาก row[6]
                     
                     if not name:
                         continue
@@ -2888,9 +3673,9 @@ objShell.MinimizeAll()
             # ดึงยอดขายและคำนวณต้นทุนจากสินค้าที่ขายไป
             if len(records) > 1:
                 for row in records[1:]:
-                    safe_row = (row + [""] * 12)[:12]
-                    # column 7 = Total ยอดขาย
-                    total_str = safe_row[6] if len(safe_row) > 6 else ""
+                    safe_row = (row + [""] * 14)[:14]
+                    # column 9 = Total ยอดขาย (index 8) - เปลี่ยนจาก row[6]
+                    total_str = safe_row[8] if len(safe_row) > 8 else ""
                     # ดึงชื่อสินค้าและจำนวน (ถ้ามีใน record)
                     # ปกติใน Sales sheet อาจมีรายการสินค้าแยกต่างหาก หรืออาจต้องประมาณจากยอดขาย
                     
@@ -5017,9 +5802,9 @@ https://developers.facebook.com/tools/explorer/
                 pass
             
             # ชื่อร้าน - use Helvetica for English
-            pdf.set_font("Helvetica", "B", 13)
+            pdf.set_font("Helvetica", "B", 14)
             pdf.cell(0, 6, "JZ Auto Parts", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-            pdf.set_font(thai_font, "", 9)
+            pdf.set_font(thai_font, "", 14)
             pdf.cell(0, 4, "ร้านอะไหล่รถ JZ", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
             
             # เส้นคั่น
@@ -5038,7 +5823,7 @@ https://developers.facebook.com/tools/explorer/
                 # ถ้า timestamp เป็นค่าว่าง ใช้เวลาปัจจุบัน (เวลาออกใบเสร็จจริง)
                 date_time = datetime.now()
             
-            pdf.set_font(thai_font, "", 9)
+            pdf.set_font(thai_font, "", 12)
             pdf.cell(40, 4, f"เลขที่ใบเสร็จ : {receipt_id}", border=0, align="L", new_x=XPos.LEFT, new_y=YPos.TOP)
             pdf.cell(0, 4, f"เวลา : {date_time.strftime('%d/%m/%Y %H:%M:%S')}", border=0, align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
