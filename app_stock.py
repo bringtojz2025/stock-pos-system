@@ -542,6 +542,16 @@ objShell.MinimizeAll()
         except:
             pass
 
+    def center_window(self, window):
+        """จัดวาง window ให้อยู่ตรงกลางจอ"""
+        window.update_idletasks()
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        window_width = window.winfo_width()
+        window_height = window.winfo_height()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        window.geometry(f"+{x}+{y}")
 
     # =========================================
     # TAB 1: POS Logic
@@ -730,8 +740,13 @@ objShell.MinimizeAll()
             self.update_cart_ui()
             self.pos_barcode.delete(0, "end")
         else:
-            self.play_sound("error")
-            messagebox.showerror("ไม่พบสินค้า", f"ไม่พบ Barcode: {barcode}")
+            # ถ้าไม่พบบาร์โค้ดตรงกัน ให้ค้นหาบาร์โค้ดที่คล้ายกัน
+            similar_products = self.search_similar_barcodes(barcode)
+            if similar_products:
+                self.show_barcode_selection_dialog(similar_products)
+            else:
+                self.play_sound("error")
+                messagebox.showerror("ไม่พบสินค้า", f"ไม่พบ Barcode: {barcode}")
             self.pos_barcode.delete(0, "end")
 
     def add_manual_item(self):
@@ -741,6 +756,7 @@ objShell.MinimizeAll()
         dialog.geometry("450x320")
         dialog.resizable(False, False)
         dialog.grab_set()
+        self.after(100, lambda: self.center_window(dialog))
         
         # ชื่อรายการ
         ctk.CTkLabel(dialog, text="ชื่อรายการ:", font=("Kanit", 12, "bold")).pack(pady=(20, 5), padx=20, anchor="w")
@@ -805,6 +821,110 @@ objShell.MinimizeAll()
                      font=("Kanit", 12), fg_color="#27AE60", hover_color="#1E8449").pack(side="left", fill="x", expand=True, padx=(0, 10))
         ctk.CTkButton(btn_frame, text="✕ ยกเลิก", command=dialog.destroy, 
                      font=("Kanit", 12), fg_color="#E74C3C", hover_color="#C0392B").pack(side="left", fill="x", expand=True)
+
+    def search_similar_barcodes(self, search_barcode):
+        """ค้นหาบาร์โค้ดที่คล้ายกัน โดยตรวจสอบว่ามีบาร์โค้ดที่มีตัวอักษรชุดนี้อยู่ไหม"""
+        similar = []
+        search_lower = search_barcode.lower()
+        
+        for idx, row in self.all_inventory_data:
+            barcode = str(row[1]).strip().lower()
+            # ค้นหาบาร์โค้ดที่เริ่มต้นด้วย search_barcode หรือมี search_barcode อยู่ในนั้น
+            if barcode.startswith(search_lower) or search_lower in barcode:
+                name = str(row[2]).strip() if len(row) > 2 else ""
+                try:
+                    price = float(row[8]) if len(row) > 8 else 0.0
+                except:
+                    price = 0.0
+                try:
+                    stock = int(row[7]) if len(row) > 7 and row[7] else 0
+                except:
+                    stock = 0
+                similar.append({
+                    'idx': idx,
+                    'barcode': str(row[1]).strip(),
+                    'name': name,
+                    'price': price,
+                    'stock': stock,
+                    'row': row
+                })
+        
+        return similar[:10]  # คืน 10 รายการแรก
+
+    def show_barcode_selection_dialog(self, similar_products):
+        """แสดง dialog เลือกจากบาร์โค้ดที่คล้ายกัน"""
+        if not similar_products:
+            return
+        
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("เลือกสินค้า")
+        dialog.geometry("700x500")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        self.after(100, lambda: self.center_window(dialog))
+        
+        # หัวข้อ
+        ctk.CTkLabel(dialog, text="เลือกสินค้าที่ต้องการ:", font=("Kanit", 20, "bold")).pack(pady=15, padx=10)
+        
+        # Scrollable frame สำหรับรายการ
+        scroll_frame = ctk.CTkScrollableFrame(dialog, fg_color="gray25")
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        def select_product(product):
+            """เลือกสินค้าและเพิ่มลงตะกร้า"""
+            row_idx = product['idx']
+            barcode = product['barcode']
+            name = product['name']
+            price = product['price']
+            stock = product['stock']
+            
+            # เช็ค stock
+            qty_in_cart = sum(item['qty'] for item in self.cart_items if item['barcode'] == barcode)
+            if qty_in_cart + 1 > stock:
+                messagebox.showwarning("สต็อกหมด", f"สินค้า '{name}' เหลือเพียง {stock} ชิ้น")
+                return
+            
+            # เพิ่มลงตะกร้า
+            existing_item = next((item for item in self.cart_items if item['barcode'] == barcode), None)
+            if existing_item:
+                existing_item['qty'] += 1
+                existing_item['total'] = existing_item['qty'] * existing_item['price']
+            else:
+                self.cart_items.append({
+                    'barcode': barcode, 'name': name, 'qty': 1, 'price': price,
+                    'total': price, 'row_idx': row_idx
+                })
+            
+            self.play_sound("success")
+            self.lbl_last_scan.configure(text=f"ล่าสุด: {name} (฿{price})")
+            self.update_cart_ui()
+            dialog.destroy()
+        
+        # แสดงรายการสินค้า
+        for product in similar_products:
+            # สร้าง frame สำหรับแต่ละรายการ
+            item_frame = ctk.CTkFrame(scroll_frame, fg_color="gray30", corner_radius=8)
+            item_frame.pack(fill="x", padx=5, pady=8)
+            
+            # ข้อมูลสินค้า
+            info_text = f"📦 {product['name']}"
+            if product['stock'] > 0:
+                info_text += f" (คลัง: {product['stock']})"
+            else:
+                info_text += " ⚠️ สต็อกหมด"
+            
+            ctk.CTkLabel(item_frame, text=info_text, font=("Kanit", 16, "bold"), text_color="white").pack(anchor="w", padx=15, pady=(12, 4))
+            ctk.CTkLabel(item_frame, text=f"Barcode: {product['barcode']} | ราคา: ฿{product['price']:,.2f}", 
+                        font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(0, 12))
+            
+            # ปุ่มเลือก
+            btn = ctk.CTkButton(item_frame, text="✓ เลือก", command=lambda p=product: select_product(p),
+                               fg_color="#27AE60", hover_color="#1E8449", font=("Kanit", 13), height=40)
+            btn.pack(side="right", padx=15, pady=(0, 12))
+        
+        # ปุ่มปิด dialog
+        ctk.CTkButton(dialog, text="ปิด", command=dialog.destroy, 
+                     font=("Kanit", 14), fg_color="#E74C3C", hover_color="#C0392B", height=45).pack(pady=15, padx=10, fill="x")
 
     def update_cart_ui(self):
         for i in self.cart_tree.get_children(): self.cart_tree.delete(i)
@@ -1173,6 +1293,7 @@ objShell.MinimizeAll()
         qr_window.title("🎉 คุณได้รับคูปองส่วนลด!")
         qr_window.geometry("400x450")
         qr_window.attributes("-topmost", True)
+        self.center_window(qr_window)
         ctk.CTkLabel(qr_window, text="ซื้อครบ 200 บาท\nรับคูปองส่วนลด 10% ครั้งถัดไป", 
                      font=("Kanit", 18, "bold"), text_color="#E67E22").pack(pady=20)
         qr = qrcode.QRCode(box_size=10, border=2)
@@ -1744,6 +1865,7 @@ objShell.MinimizeAll()
         self.add_window.title("เพิ่มสินค้า")
         self.add_window.geometry("450x750")
         self.add_window.attributes("-topmost", True)
+        self.after(100, lambda: self.center_window(self.add_window))
         
         # Frame สำหรับ Barcode + ปุ่มสร้าง
         barcode_frame = ctk.CTkFrame(self.add_window, fg_color="transparent")
@@ -2495,6 +2617,8 @@ objShell.MinimizeAll()
         dialog.geometry("500x600")
         dialog.resizable(False, False)
         dialog.grab_set()
+        self.after(100, lambda: self.center_window(dialog))
+        self.center_window(dialog)
         
         # ScrollableFrame เพื่อให้ form ยาว
         scroll_frame = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
@@ -2610,6 +2734,7 @@ objShell.MinimizeAll()
         dialog.geometry("500x600")
         dialog.resizable(False, False)
         dialog.grab_set()
+        self.after(100, lambda: self.center_window(dialog))
         
         scroll_frame = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
         scroll_frame.pack(fill="both", expand=True, padx=15, pady=15)
@@ -2911,6 +3036,7 @@ objShell.MinimizeAll()
         dialog.geometry("450x350")
         dialog.resizable(False, False)
         dialog.grab_set()
+        self.after(100, lambda: self.center_window(dialog))
         
         # ชื่อ
         ctk.CTkLabel(dialog, text="โค้ตที่ใช้ได้สำหรับลูกค้านี้:", font=("Kanit", 12, "bold")).pack(pady=10, padx=10)
@@ -4040,6 +4166,8 @@ objShell.MinimizeAll()
         dialog.title("เพิ่มซัพพลายเออร์ใหม่")
         dialog.geometry("400x450")
         dialog.resizable(False, False)
+        dialog.grab_set()
+        self.after(100, lambda: self.center_window(dialog))
         
         ctk.CTkLabel(dialog, text="เพิ่มซัพพลายเออร์ใหม่", font=("Kanit", 16, "bold")).pack(pady=15)
         
@@ -4094,6 +4222,8 @@ objShell.MinimizeAll()
         dialog.title("แก้ไขซัพพลายเออร์")
         dialog.geometry("400x470")
         dialog.resizable(False, False)
+        dialog.grab_set()
+        self.after(100, lambda: self.center_window(dialog))
         
         ctk.CTkLabel(dialog, text="แก้ไขซัพพลายเออร์", font=("Kanit", 16, "bold")).pack(pady=15)
         
@@ -5455,6 +5585,7 @@ https://developers.facebook.com/tools/explorer/
         settings_window.title("⚙️ ตั้งค่าเครื่องปริ้น")
         settings_window.geometry("400x300")
         settings_window.attributes("-topmost", True)
+        self.center_window(settings_window)
         
         ctk.CTkLabel(settings_window, text="⚙️ ตั้งค่าเครื่องปริ้น", 
                     font=("Kanit", 20, "bold")).pack(pady=20)
@@ -5671,6 +5802,7 @@ https://developers.facebook.com/tools/explorer/
         preview_window.title(f"🖨️ พรีวิวลาเบล - {barcode}")
         preview_window.geometry("360x650")
         preview_window.attributes("-topmost", True)
+        self.center_window(preview_window)
         
         try:
             # โหลดและแสดงรูปภาพ
