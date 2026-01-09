@@ -578,7 +578,7 @@ objShell.MinimizeAll()
         
         # ปุ่มเพิ่มรายการแบบ manual (ค่าบริการ, อื่นๆ)
         btn_add_manual = ctk.CTkButton(left_frame, text="➕ เพิ่มรายการอื่นๆ", command=self.add_manual_item,
-                                       font=("Kanit", 14), height=40, fg_color="#8E44AD", hover_color="#7D3C98")
+                                       font=("Kanit", 16), height=40, fg_color="#8E44AD", hover_color="#7D3C98")
         btn_add_manual.pack(pady=10, fill="x", padx=10)
         
         # --- ส่วนเบอร์โทรศัพท์สมาชิก ---
@@ -586,22 +586,22 @@ objShell.MinimizeAll()
         
         member_frame = ctk.CTkFrame(left_frame, fg_color="gray25")
         member_frame.pack(fill="x", padx=10, pady=5)
-        ctk.CTkLabel(member_frame, text="เบอร์โทรศัพท์:", font=("Kanit", 11)).pack(anchor="w", padx=10, pady=5)
+        ctk.CTkLabel(member_frame, text="เบอร์โทรศัพท์:", font=("Kanit", 14)).pack(anchor="w", padx=10, pady=5)
         
         # Frame สำหรับช่อง input และปุ่มค้นหา
         phone_input_frame = ctk.CTkFrame(member_frame, fg_color="transparent")
         phone_input_frame.pack(fill="x", padx=10, pady=5)
         
-        self.member_phone_entry = ctk.CTkEntry(phone_input_frame, placeholder_text="ใส่เบอร์โทรศัพท์เพื่อค้นหาลูกค้า", font=("Kanit", 11))
+        self.member_phone_entry = ctk.CTkEntry(phone_input_frame, placeholder_text="ใส่เบอร์โทรศัพท์เพื่อค้นหาลูกค้า", font=("Kanit", 12))
         self.member_phone_entry.pack(side="left", fill="both", expand=True, padx=(0, 5))
         self.member_phone_entry.bind("<Return>", self.lookup_customer_by_phone)
         
         btn_search_member = ctk.CTkButton(phone_input_frame, text="🔍 ค้นหา", command=self.lookup_customer_by_phone,
-                                         font=("Kanit", 10), width=70, height=32)
+                                         font=("Kanit", 14), width=70, height=32)
         btn_search_member.pack(side="right")
         
         # แสดงข้อมูลลูกค้า
-        self.lbl_customer_info = ctk.CTkLabel(member_frame, text="ยังไม่พบข้อมูลลูกค้า", font=("Kanit", 10), text_color="gray")
+        self.lbl_customer_info = ctk.CTkLabel(member_frame, text="ยังไม่พบข้อมูลลูกค้า", font=("Kanit", 12), text_color="gray")
         self.lbl_customer_info.pack(anchor="w", padx=10, pady=5)
         
         # --- เพิ่มส่วนโค้ตส่วนลดลงฝั่งซ้าย ---
@@ -610,7 +610,7 @@ objShell.MinimizeAll()
         # เพิ่มส่วนโค้ตส่วนลด
         discount_frame = ctk.CTkFrame(left_frame, fg_color="gray25")
         discount_frame.pack(fill="x", padx=10, pady=5)
-        ctk.CTkLabel(discount_frame, text="โค้ตส่วนลด:", font=("Kanit", 11)).pack(anchor="w", padx=10, pady=5)
+        ctk.CTkLabel(discount_frame, text="โค้ตส่วนลด:", font=("Kanit", 14)).pack(anchor="w", padx=10, pady=5)
         self.discount_code_entry = ctk.CTkEntry(discount_frame, placeholder_text="ใส่โค้ตส่วนลด", font=("Kanit", 11))
         self.discount_code_entry.pack(fill="x", padx=10, pady=5)
         self.discount_code_entry.bind("<KeyRelease>", self.update_discount_display)
@@ -618,22 +618,22 @@ objShell.MinimizeAll()
         # แสดงสถานะของโค้ตว่าใช้ได้หรือไม่
         status_frame = ctk.CTkFrame(discount_frame, fg_color="gray25")
         status_frame.pack(fill="x", padx=10, pady=5)
-        self.lbl_coupon_status = ctk.CTkLabel(status_frame, text="✓", font=("Kanit", 11), text_color="#27AE60")
+        self.lbl_coupon_status = ctk.CTkLabel(status_frame, text="✓", font=("Kanit", 12), text_color="#27AE60")
         self.lbl_coupon_status.pack(side="left", padx=5)
         
         # เพิ่มส่วนประเภทการจ่าย
         payment_frame = ctk.CTkFrame(left_frame, fg_color="gray25")
         payment_frame.pack(fill="x", padx=10, pady=5)
-        ctk.CTkLabel(payment_frame, text="ประเภทการจ่าย:", font=("Kanit", 11)).pack(anchor="w", padx=10, pady=5)
-        self.payment_method = ctk.CTkComboBox(payment_frame, values=["เงินสด", "QR Code", "Credit Card"], 
-                                              font=("Kanit", 11))
-        self.payment_method.set("เงินสด")
+        ctk.CTkLabel(payment_frame, text="ประเภทการจ่าย:", font=("Kanit", 14)).pack(anchor="w", padx=10, pady=5)
+        self.payment_method = ctk.CTkComboBox(payment_frame, values=["Cash", "QR Code", "Credit Card"], 
+                                              font=("Kanit", 12))
+        self.payment_method.set("Cash")
         self.payment_method.pack(fill="x", padx=10, pady=5)
 
         # เพิ่มส่วนตั้งค่าใบเสร็จ
         receipt_frame = ctk.CTkFrame(left_frame, fg_color="gray25")
         receipt_frame.pack(fill="x", padx=10, pady=5)
-        ctk.CTkLabel(receipt_frame, text="⚙️ ตั้งค่าใบเสร็จ", font=("Kanit", 11, "bold")).pack(anchor="w", padx=10, pady=(5, 0))
+        ctk.CTkLabel(receipt_frame, text="⚙️ ตั้งค่าใบเสร็จ", font=("Kanit", 16, "bold")).pack(anchor="w", padx=10, pady=(5, 0))
         
         # Frame สำหรับปุ่มปริ้นอัตโนมัติและตัวบ่งชี้สถานะ
         auto_print_frame = ctk.CTkFrame(receipt_frame, fg_color="transparent")
@@ -642,21 +642,28 @@ objShell.MinimizeAll()
         # สลับโหมดปริ้นอัตโนมัติ
         btn_auto_print = ctk.CTkButton(auto_print_frame, text="🖨️ สลับปริ้นอัตโนมัติ", 
                                        command=self.toggle_receipt_auto_print,
-                                       font=("Kanit", 10), height=30)
+                                       font=("Kanit", 14), height=30)
         btn_auto_print.pack(side="left", fill="x", expand=True, padx=(0, 5))
         
         # ตัวบ่งชี้สถานะปริ้นอัตโนมัติ
         self.lbl_auto_print_status = ctk.CTkLabel(auto_print_frame, text="⭕ ปิด",
-                                                   font=("Kanit", 11, "bold"),
+                                                   font=("Kanit", 14, "bold"),
                                                    text_color="#E74C3C",
                                                    width=60)
         self.lbl_auto_print_status.pack(side="left", padx=5)
         
-        # ปุ่มดูโฟลเดอร์ใบเสร็จ
-        btn_open_receipts = ctk.CTkButton(receipt_frame, text="📁 เปิดโฟลเดอร์ใบเสร็จ", 
+        # ปุ่มเลือกเครื่องปริ้นและดูโฟลเดอร์ใบเสร็จ
+        printer_receipt_frame = ctk.CTkFrame(receipt_frame, fg_color="transparent")
+        printer_receipt_frame.pack(fill="x", padx=10, pady=5)
+        
+        btn_select_printer = ctk.CTkButton(printer_receipt_frame, text="🖨️ เลือกเครื่องปริ้น", command=self.open_printer_settings,
+                                          font=("Kanit", 14), height=30, fg_color="#2E86C1", hover_color="#1E5BA8", anchor="center")
+        btn_select_printer.pack(fill="x", expand=True, padx=0, pady=2)
+        
+        btn_open_receipts = ctk.CTkButton(printer_receipt_frame, text="📁 เปิดโฟลเดอร์ใบเสร็จ", 
                                           command=lambda: os.startfile(self.receipts_folder) if os.path.exists(self.receipts_folder) else messagebox.showwarning("แจ้งเตือน", "ยังไม่มีใบเสร็จ"),
-                                          font=("Kanit", 10), height=30)
-        btn_open_receipts.pack(fill="x", padx=10, pady=5)
+                                          font=("Kanit", 14), height=30, anchor="center")
+        btn_open_receipts.pack(fill="x", expand=True, padx=0, pady=2)
 
         # CENTER/RIGHT FRAME - สำหรับตะกร้าและชำระเงิน
         right_frame = ctk.CTkScrollableFrame(paned, fg_color="transparent")
@@ -674,8 +681,8 @@ objShell.MinimizeAll()
         self.cart_tree.pack(fill="both", expand=True, padx=10)
         
         btn_del_item = ctk.CTkButton(right_frame, text="❌ ลบรายการที่เลือก", command=self.delete_from_cart,
-                                     fg_color="#FF474C", height=30, border_width=2, border_color="#CC0000")
-        btn_del_item.pack(pady=5, padx=10, anchor="e")
+                                     fg_color="#FF474C", height=45, border_width=2, border_color="#CC0000",font=("Kanit", 14, "bold"))
+        btn_del_item.pack(pady=10, padx=10, fill="x")
 
         sum_frame = ctk.CTkFrame(right_frame, fg_color="gray20")
         sum_frame.pack(fill="x", padx=10, pady=10)
@@ -686,7 +693,7 @@ objShell.MinimizeAll()
         # แสดงยอดส่วนลด
         discount_info_frame = ctk.CTkFrame(right_frame, fg_color="gray20")
         discount_info_frame.pack(fill="x", padx=10, pady=5)
-        self.lbl_discount_amount = ctk.CTkLabel(discount_info_frame, text="ส่วนลด: 0.00 บาท", font=("Kanit", 14), text_color="#E74C3C")
+        self.lbl_discount_amount = ctk.CTkLabel(discount_info_frame, text="ส่วนลด: 0.00 บาท", font=("Kanit", 16), text_color="#E74C3C")
         self.lbl_discount_amount.pack(pady=5)
         self.lbl_final_price = ctk.CTkLabel(discount_info_frame, text="ราคาสุดท้าย: 0.00 บาท", font=("Kanit", 16, "bold"), text_color="#F39C12")
         self.lbl_final_price.pack(pady=5)
@@ -1353,6 +1360,10 @@ objShell.MinimizeAll()
         btn_print_label = ctk.CTkButton(print_frame, text="🖨️ ปริ้นลาเบล", command=self.print_barcode_label,
                                        fg_color="#2E86C1", border_width=2, border_color="#1E5BA8")
         btn_print_label.pack(side="left", fill="x", expand=True, padx=2)
+        
+        btn_select_printer_inv = ctk.CTkButton(print_frame, text="🖨️ เลือกเครื่องปริ้น", command=self.open_printer_settings,
+                                              fg_color="#2E86C1", border_width=2, border_color="#1E5BA8", width=150)
+        btn_select_printer_inv.pack(side="left", padx=2)
         
         btn_printer_settings = ctk.CTkButton(print_frame, text="⚙️ ตั้งค่าปริ้น", command=self.open_printer_settings,
                                             fg_color="#7D3C98", border_width=2, border_color="#5B2C78", width=120)
