@@ -356,27 +356,105 @@ class StockManagerApp(ctk.CTk):
             return datetime.now().strftime("JZ-%Y%m%d-%H%M%S")
 
     def create_layout(self):
-        self.tabview = ctk.CTkTabview(self)
-        self.tabview._segmented_button.configure(font=("Kanit", 13, "bold"))
-        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.tab_pos = self.tabview.add("🛒 ขายหน้าร้าน (POS)")
-        self.tab_history = self.tabview.add("📜 ประวัติการขาย (History)")
-        self.tab_inventory = self.tabview.add("📦 คลังสินค้า (Inventory)")
-        self.tab_customers = self.tabview.add("👥 ลูกค้า (Customers)")
-        self.tab_dashboard = self.tabview.add("📊 ภาพรวม (Dashboard)")
-        self.tab_reports = self.tabview.add("📈 รายงาน (Reports)")
-        self.tab_suppliers = self.tabview.add("🏭 ซัพพลายเออร์ (Suppliers)")
-        self.tab_ai_social = self.tabview.add("🤖 AI & Social Media")
-
-        self.setup_pos_tab()
-        self.setup_history_tab()
-        self.setup_inventory_tab()
-        self.setup_customers_tab()
-        self.setup_dashboard_tab()
-        self.setup_reports_tab()
-        self.setup_suppliers_tab()
-        self.setup_ai_social_tab()
+        # สร้าง Frame สำหรับแท็บเมนู 2 บรรทัด
+        tabs_menu_frame = ctk.CTkFrame(self, fg_color="transparent")
+        tabs_menu_frame.pack(fill="x", padx=10, pady=10)
+        
+        # บรรทัดแรก: 4 แท็บ
+        row1_frame = ctk.CTkFrame(tabs_menu_frame, fg_color="transparent")
+        row1_frame.pack(fill="x", pady=2)
+        
+        # บรรทัดที่สอง: 4 แท็บ
+        row2_frame = ctk.CTkFrame(tabs_menu_frame, fg_color="transparent")
+        row2_frame.pack(fill="x", pady=2)
+        
+        # สร้าง Frame ด้านในสำหรับเก็บ tab content
+        self.tabview_container = ctk.CTkFrame(self)
+        self.tabview_container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        # ข้อมูลแท็บ
+        tabs_data = [
+            ("🛒 ขายหน้าร้าน", "pos", row1_frame),
+            ("📜 ประวัติการขาย", "history", row1_frame),
+            ("📦 คลังสินค้า", "inventory", row1_frame),
+            ("👥 ลูกค้า", "customers", row1_frame),
+            ("📊 ภาพรวม", "dashboard", row2_frame),
+            ("📈 รายงาน", "reports", row2_frame),
+            ("🏭 ซัพพลายเออร์", "suppliers", row2_frame),
+            ("🤖 AI & Social Media", "ai_social", row2_frame),
+        ]
+        
+        # สร้าง tab buttons และ frames
+        self.tab_frames = {}
+        self.current_tab = None
+        
+        for tab_name, tab_key, row_frame in tabs_data:
+            # สร้าง button
+            btn = ctk.CTkButton(
+                row_frame,
+                text=tab_name,
+                font=("Kanit", 13, "bold"),
+                height=40,
+                command=lambda key=tab_key, name=tab_name: self.switch_tab(key),
+                fg_color="#2B2B2B",
+                hover_color="#3D3D3D",
+                border_width=2,
+                border_color="#555555"
+            )
+            btn.pack(side="left", fill="both", expand=True, padx=2)
+            
+            # สร้าง frame สำหรับเนื้อหาแท็บ
+            frame = ctk.CTkFrame(self.tabview_container, fg_color="transparent")
+            frame.pack(fill="both", expand=True)
+            frame.pack_forget()  # ซ่อนในตอนแรก
+            
+            self.tab_frames[tab_key] = {
+                'button': btn,
+                'frame': frame,
+                'name': tab_name,
+                'setup_done': False
+            }
+        
+        # สร้างแท็บสำหรับรีเฟอร์เรนซ์เดิม
+        self.tab_pos = self.tab_frames['pos']['frame']
+        self.tab_history = self.tab_frames['history']['frame']
+        self.tab_inventory = self.tab_frames['inventory']['frame']
+        self.tab_customers = self.tab_frames['customers']['frame']
+        self.tab_dashboard = self.tab_frames['dashboard']['frame']
+        self.tab_reports = self.tab_frames['reports']['frame']
+        self.tab_suppliers = self.tab_frames['suppliers']['frame']
+        self.tab_ai_social = self.tab_frames['ai_social']['frame']
+        
+        # ตั้งค่าแท็บแรกให้เป็นค่าเริ่มต้น
+        self.switch_tab('pos')
+    
+    def switch_tab(self, tab_key):
+        """สลับแท็บ"""
+        # ซ่อนแท็บเดิม
+        if self.current_tab:
+            self.tab_frames[self.current_tab]['frame'].pack_forget()
+            self.tab_frames[self.current_tab]['button'].configure(fg_color="#2B2B2B", border_color="#555555")
+        
+        # แสดงแท็บใหม่
+        self.tab_frames[tab_key]['frame'].pack(fill="both", expand=True)
+        self.tab_frames[tab_key]['button'].configure(fg_color="#2CC985", border_color="#1B8A4C")
+        self.current_tab = tab_key
+        
+        # เรียก setup function ถ้ายังไม่เรียกมาก่อน
+        if not self.tab_frames[tab_key]['setup_done']:
+            setup_methods = {
+                'pos': self.setup_pos_tab,
+                'history': self.setup_history_tab,
+                'inventory': self.setup_inventory_tab,
+                'customers': self.setup_customers_tab,
+                'dashboard': self.setup_dashboard_tab,
+                'reports': self.setup_reports_tab,
+                'suppliers': self.setup_suppliers_tab,
+                'ai_social': self.setup_ai_social_tab,
+            }
+            if tab_key in setup_methods:
+                setup_methods[tab_key]()
+                self.tab_frames[tab_key]['setup_done'] = True
 
     def create_layout_and_load_data(self):
         """สร้าง layout และโหลดข้อมูล"""
@@ -1350,7 +1428,8 @@ objShell.MinimizeAll()
         self.tree.bind("<Double-1>", self.on_tree_double_click)
 
         btn_add = ctk.CTkButton(frame_list, text="➕ เพิ่มสินค้าใหม่", command=self.open_add_product_window, 
-                                fg_color="#F39C12", border_width=2, border_color="#D4860D")
+                                fg_color="#F39C12", border_width=2, border_color="#D4860D", 
+                                font=("Kanit", 14, "bold"), height=40)
         btn_add.pack(fill="x", pady=5)
 
         # ปุ่มปริ้นลาเบล
@@ -1358,16 +1437,14 @@ objShell.MinimizeAll()
         print_frame.pack(fill="x", pady=5)
         
         btn_print_label = ctk.CTkButton(print_frame, text="🖨️ ปริ้นลาเบล", command=self.print_barcode_label,
-                                       fg_color="#2E86C1", border_width=2, border_color="#1E5BA8")
+                                       fg_color="#2E86C1", border_width=2, border_color="#1E5BA8",
+                                       font=("Kanit", 13, "bold"), height=35)
         btn_print_label.pack(side="left", fill="x", expand=True, padx=2)
         
         btn_select_printer_inv = ctk.CTkButton(print_frame, text="🖨️ เลือกเครื่องปริ้น", command=self.open_printer_settings,
-                                              fg_color="#2E86C1", border_width=2, border_color="#1E5BA8", width=150)
+                                              fg_color="#2E86C1", border_width=2, border_color="#1E5BA8", width=150,
+                                              font=("Kanit", 13, "bold"), height=35)
         btn_select_printer_inv.pack(side="left", padx=2)
-        
-        btn_printer_settings = ctk.CTkButton(print_frame, text="⚙️ ตั้งค่าปริ้น", command=self.open_printer_settings,
-                                            fg_color="#7D3C98", border_width=2, border_color="#5B2C78", width=120)
-        btn_printer_settings.pack(side="left", padx=2)
 
         # --- RIGHT PANEL ---
         frame_detail = ctk.CTkFrame(paned, width=400)
