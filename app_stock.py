@@ -247,6 +247,16 @@ class StockManagerApp(ctk.CTk):
                     self.sheet_inventory.append_row(["ProductID", "Barcode", "Name", "Brand", "Car Model", "Detail", "Cost", "Stock", "Price", "ImageID"])
                 except:
                     self.sheet_inventory = None
+            
+            # เพิ่ม Customers sheet
+            try:
+                self.sheet_customers = self.sh.worksheet("Customers")
+            except:
+                try:
+                    self.sheet_customers = self.sh.add_worksheet(title="Customers", rows="1000", cols="12")
+                    self.sheet_customers.append_row(["CustomerID", "FullName", "Nickname", "Birthday", "Phone", "Address", "Vehicle", "LicensePlate", "LastVisit", "TotalSpent", "AvailableCoupons", "Notes"])
+                except:
+                    self.sheet_customers = None
         except Exception as e:
             print(f"Connection Error: {e}")
             import traceback; traceback.print_exc()
@@ -264,14 +274,14 @@ class StockManagerApp(ctk.CTk):
         self.load_receipt_settings()
 
         # ตั้งขนาด window เริ่มต้น
-        self.geometry("1200x750")
+        self.geometry("1200x900")
         
         # คำนวณตำแหน่งตรงกลางจอ
         self.update_idletasks()
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
         window_width = 1200
-        window_height = 750
+        window_height = 900
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         self.geometry(f"{window_width}x{window_height}+{x}+{y}")
@@ -620,12 +630,12 @@ objShell.MinimizeAll()
         ctk.CTkLabel(right_frame, text="รายการในใบเสร็จ", font=("Kanit", 20, "bold")).pack(pady=10)
 
         columns = ("Barcode", "Name", "Qty", "Price", "Total")
-        self.cart_tree = ttk.Treeview(right_frame, columns=columns, show="headings", height=12)
-        self.cart_tree.heading("Barcode", text="Barcode"); self.cart_tree.column("Barcode", width=100)
-        self.cart_tree.heading("Name", text="สินค้า"); self.cart_tree.column("Name", width=150)
-        self.cart_tree.heading("Qty", text="จำนวน"); self.cart_tree.column("Qty", width=60, anchor="center")
-        self.cart_tree.heading("Price", text="ราคา"); self.cart_tree.column("Price", width=80, anchor="e")
-        self.cart_tree.heading("Total", text="รวม"); self.cart_tree.column("Total", width=80, anchor="e")
+        self.cart_tree = ttk.Treeview(right_frame, columns=columns, show="headings", height=5)
+        self.cart_tree.heading("Barcode", text="Barcode"); self.cart_tree.column("Barcode", width=80, stretch=True)
+        self.cart_tree.heading("Name", text="สินค้า"); self.cart_tree.column("Name", width=150, stretch=True)
+        self.cart_tree.heading("Qty", text="จำนวน"); self.cart_tree.column("Qty", width=50, anchor="center", stretch=True)
+        self.cart_tree.heading("Price", text="ราคา"); self.cart_tree.column("Price", width=70, anchor="e", stretch=True)
+        self.cart_tree.heading("Total", text="รวม"); self.cart_tree.column("Total", width=70, anchor="e", stretch=True)
         self.cart_tree.pack(fill="both", expand=True, padx=10)
         
         btn_del_item = ctk.CTkButton(right_frame, text="❌ ลบรายการที่เลือก", command=self.delete_from_cart,
@@ -655,7 +665,7 @@ objShell.MinimizeAll()
         container = ctk.CTkFrame(parent, height=50, fg_color=("gray95", "gray25")) 
         container.pack(pady=8, padx=20, fill="x")
         ctk.CTkLabel(container, text=suffix, width=80, font=("Kanit", 12, "bold")).pack(side="right", padx=10)
-        entry = ctk.CTkEntry(container, placeholder_text=ph, height=50, font=("Kanit", 18), 
+        entry = ctk.CTkEntry(container, placeholder_text=ph, height=50, font=("Kanit", 14), 
                              border_width=0, fg_color="transparent")
         entry.pack(side="left", fill="both", expand=True, padx=10)
         return entry
@@ -745,8 +755,8 @@ objShell.MinimizeAll()
             except:
                 qty = 1
             
-            # ใช้ "MANUAL-" เป็น barcode สำหรับรายการแบบ manual
-            barcode = f"MANUAL-{len(self.cart_items)+1}"
+            # ใช้ "Sevice-" เป็น barcode สำหรับรายการแบบ manual
+            barcode = f"Sevice-{len(self.cart_items)+1}"
             
             self.cart_items.append({
                 'barcode': barcode,
@@ -1160,15 +1170,68 @@ objShell.MinimizeAll()
                                         height=30, border_width=2, border_color="#2E86C1", fg_color="#2E86C1")
         btn_print_single.pack(pady=5, padx=10, fill="x")
 
-        self.lbl_info_name = ctk.CTkLabel(frame_detail, text="-", font=("Kanit", 20, "bold"))
-        self.lbl_info_name.pack(pady=5)
-        
-        self.lbl_info_stock = ctk.CTkLabel(frame_detail, text="Stock: -", font=("Kanit", 24, "bold"), text_color="#3498DB")
-        self.lbl_info_stock.pack(pady=5)
+        # ====== Product Details Box ======
+        detail_box = ctk.CTkFrame(frame_detail, fg_color="gray25", corner_radius=8)
+        detail_box.pack(fill="both", expand=True, padx=5, pady=10)
 
-        ctk.CTkLabel(frame_detail, text="รายละเอียดสินค้า:", font=("Kanit", 16, "bold"), anchor="w").pack(fill="x", padx=10, pady=(10,0))
-        self.txt_info_detail = ctk.CTkTextbox(frame_detail, height=100, font=("Kanit", 16))
-        self.txt_info_detail.pack(fill="x", padx=10, pady=5)
+        # Row 1: Name + Brand
+        row1_frame = ctk.CTkFrame(detail_box, fg_color="transparent")
+        row1_frame.pack(fill="x", padx=10, pady=(10, 5))
+        
+        left1_frame = ctk.CTkFrame(row1_frame, fg_color="transparent")
+        left1_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        
+        ctk.CTkLabel(left1_frame, text="ชื่อสินค้า:", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", pady=(0, 2))
+        self.lbl_info_name = ctk.CTkLabel(left1_frame, text="-", font=("Kanit", 16, "bold"), text_color="#FFFFFF")
+        self.lbl_info_name.pack(anchor="w")
+        
+        right1_frame = ctk.CTkFrame(row1_frame, fg_color="transparent")
+        right1_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
+        
+        ctk.CTkLabel(right1_frame, text="ยี่ห้อ:", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", pady=(0, 2))
+        self.lbl_info_brand = ctk.CTkLabel(right1_frame, text="-", font=("Kanit", 16), text_color="#E0E0E0")
+        self.lbl_info_brand.pack(anchor="w")
+        
+        # Row 2: Car Model + Cost
+        row2_frame = ctk.CTkFrame(detail_box, fg_color="transparent")
+        row2_frame.pack(fill="x", padx=10, pady=5)
+        
+        left2_frame = ctk.CTkFrame(row2_frame, fg_color="transparent")
+        left2_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        
+        ctk.CTkLabel(left2_frame, text="รุ่นที่ใช้:", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", pady=(0, 2))
+        self.lbl_info_car_model = ctk.CTkLabel(left2_frame, text="-", font=("Kanit", 16), text_color="#E0E0E0")
+        self.lbl_info_car_model.pack(anchor="w")
+        
+        right2_frame = ctk.CTkFrame(row2_frame, fg_color="transparent")
+        right2_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
+        
+        ctk.CTkLabel(right2_frame, text="ราคาทุน:", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", pady=(0, 2))
+        self.lbl_info_cost = ctk.CTkLabel(right2_frame, text="-", font=("Kanit", 16), text_color="#E0E0E0")
+        self.lbl_info_cost.pack(anchor="w")
+        
+        # Row 3: Stock + Price
+        row3_frame = ctk.CTkFrame(detail_box, fg_color="transparent")
+        row3_frame.pack(fill="x", padx=10, pady=5)
+        
+        left3_frame = ctk.CTkFrame(row3_frame, fg_color="transparent")
+        left3_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        
+        ctk.CTkLabel(left3_frame, text="จำนวนสต็อก:", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", pady=(0, 2))
+        self.lbl_info_stock = ctk.CTkLabel(left3_frame, text="- ชิ้น", font=("Kanit", 16, "bold"), text_color="#00FFFF")
+        self.lbl_info_stock.pack(anchor="w")
+        
+        right3_frame = ctk.CTkFrame(row3_frame, fg_color="transparent")
+        right3_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
+        
+        ctk.CTkLabel(right3_frame, text="ราคาขาย:", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", pady=(0, 2))
+        self.lbl_info_price = ctk.CTkLabel(right3_frame, text="-", font=("Kanit", 16, "bold"), text_color="#00FF00")
+        self.lbl_info_price.pack(anchor="w")
+        
+        # Row 4: Detail (Full width)
+        ctk.CTkLabel(detail_box, text="รายละเอียด:", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", padx=10, pady=(5, 2))
+        self.txt_info_detail = ctk.CTkTextbox(detail_box, height=70, font=("Kanit", 16))
+        self.txt_info_detail.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.txt_info_detail.configure(state="disabled") 
 
         self.load_inventory_data()
@@ -1222,10 +1285,21 @@ objShell.MinimizeAll()
         vals = self.tree.item(selected)['values']
         safe_vals = list(vals) + [""]*10
         # Column indices: 0=ID, 1=Barcode, 2=Name, 3=Brand, 4=CarModel, 5=Detail, 6=Cost, 7=Stock, 8=Price, 9=ImageID
-        self.lbl_info_name.configure(text=str(safe_vals[2]))  # Name
-        self.lbl_info_stock.configure(text=f"Stock: {safe_vals[7]} ชิ้น")  # Stock
         
-        detail_txt = str(safe_vals[5])  # Detail is at index 5
+        # Update all labels
+        self.lbl_info_name.configure(text=str(safe_vals[2]))  # Name
+        self.lbl_info_brand.configure(text=str(safe_vals[3]) if safe_vals[3] else "-")  # Brand
+        self.lbl_info_car_model.configure(text=str(safe_vals[4]) if safe_vals[4] else "-")  # Car Model
+        self.lbl_info_cost.configure(text=f"฿{float(safe_vals[6]) if safe_vals[6] else 0:,.2f}")  # Cost
+        self.lbl_info_stock.configure(text=f"{safe_vals[7]} ชิ้น")  # Stock
+        
+        try:
+            price_val = float(safe_vals[8]) if safe_vals[8] else 0
+            self.lbl_info_price.configure(text=f"฿{price_val:,.2f}")  # Price
+        except:
+            self.lbl_info_price.configure(text="-")
+        
+        detail_txt = str(safe_vals[5]) if safe_vals[5] else "-"  # Detail
         self.txt_info_detail.configure(state="normal")
         self.txt_info_detail.delete("0.0", "end")
         self.txt_info_detail.insert("0.0", detail_txt)
@@ -1704,7 +1778,7 @@ objShell.MinimizeAll()
         ctk.CTkLabel(filter_search_frame, text="|", font=("Kanit", 12)).pack(side="left", padx=5)
         
         # Date Filter
-        ctk.CTkLabel(filter_search_frame, text="📅 เลือกวันที่:", font=("Kanit", 12, "bold")).pack(side="left", padx=5)
+        ctk.CTkLabel(filter_search_frame, text="📅 เลือกวันที่ :", font=("Kanit", 12, "bold")).pack(side="left", padx=5)
         
         # ใช้ DateEntry (Calendar Picker) จาก tkcalendar
         self.date_picker = DateEntry(filter_search_frame, width=15, background='blue',
@@ -2130,8 +2204,7 @@ objShell.MinimizeAll()
         
         if filtered_count == 0:
             messagebox.showinfo("ผลการค้นหา", f"ไม่พบรายการขายในวันที่ {date_input}")
-        else:
-            messagebox.showinfo("ผลการค้นหา", f"พบรายการขาย {filtered_count} ใบเสร็จในวันที่ {date_input}")
+
 
     def show_all_history(self):
         """แสดงประวัติขายทั้งหมด"""
@@ -5028,13 +5101,22 @@ https://developers.facebook.com/tools/explorer/
                 qr_code_data = received_coupon if (received_coupon and received_coupon != "-") else receipt_id
                 qr_img = self._generate_barcode_image(qr_code_data)
                 if qr_img:
-                    qr_path = os.path.join(self.receipts_folder, f"{receipt_id}_qr.png")
-                    qr_img.save(qr_path)
-                    
                     # วาง QR Code ตรงกลาง (ขนาด 38x38mm)
+                    # บันทึก QR Code ลงไฟล์ temp เพื่อการประมวลผล
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                        qr_img.save(tmp.name)
+                        tmp_qr_path = tmp.name
+                    
                     # ไม่แสดงเลขใบเสร็จด้านบน เอาไปแล้ว
-                    pdf.image(qr_path, x=21, y=pdf.get_y(), w=38, h=38)
+                    pdf.image(tmp_qr_path, x=21, y=pdf.get_y(), w=38, h=38)
                     pdf.ln(40)
+                    
+                    # ลบไฟล์ temp หลังเสร็จ
+                    try:
+                        os.remove(tmp_qr_path)
+                    except:
+                        pass
             except:
                 pass
             
@@ -5049,8 +5131,8 @@ https://developers.facebook.com/tools/explorer/
             
             
             pdf.set_font(thai_font, "", 10)
-            pdf.cell(0, 3, "facebook: PKN เครื่องเลื้อยไม้ เครื่องตัดหญ้า ราคาถูก", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-            pdf.cell(0, 3, "Tel: 086-283-6944", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            pdf.cell(0, 3, "FACEBOOK: PKN เครื่องเลื้อยไม้ เครื่องตัดหญ้า ราคาถูก", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            pdf.cell(0, 3, "TEL: 086-283-6944", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
             
             # บันทึก PDF
             pdf.output(pdf_path)
