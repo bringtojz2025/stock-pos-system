@@ -37,6 +37,7 @@ import json
 import subprocess
 import barcode as pybarcode
 from barcode.writer import ImageWriter
+from fpdf import FPDF
 
 # ติดตั้งไลบรารี่สำหรับปริ้น
 try:
@@ -350,16 +351,16 @@ class StockManagerApp(ctk.CTk):
         self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.tab_pos = self.tabview.add("🛒 ขายหน้าร้าน (POS)")
-        self.tab_inventory = self.tabview.add("📦 คลังสินค้า (Inventory)")
         self.tab_history = self.tabview.add("📜 ประวัติการขาย (History)")
+        self.tab_inventory = self.tabview.add("📦 คลังสินค้า (Inventory)")
         self.tab_dashboard = self.tabview.add("📊 ภาพรวม (Dashboard)")
         self.tab_reports = self.tabview.add("📈 รายงาน (Reports)")
         self.tab_suppliers = self.tabview.add("🏭 ซัพพลายเออร์ (Suppliers)")
         self.tab_ai_social = self.tabview.add("🤖 AI & Social Media")
 
         self.setup_pos_tab()
-        self.setup_inventory_tab()
         self.setup_history_tab()
+        self.setup_inventory_tab()
         self.setup_dashboard_tab()
         self.setup_reports_tab()
         self.setup_suppliers_tab()
@@ -418,7 +419,7 @@ objShell.MinimizeAll()
             # สร้าง Toplevel window (popup)
             self.loading_window = ctk.CTkToplevel(self)
             self.loading_window.title("Loading")
-            self.loading_window.geometry("400x300")
+            self.loading_window.geometry("400x380")
             self.loading_window.resizable(False, False)
             
             # ตั้งให้อยู่ตรงกลางจอ
@@ -434,6 +435,21 @@ objShell.MinimizeAll()
             # สร้าง main frame ในโปรแกรม
             loading_frame = ctk.CTkFrame(self.loading_window, fg_color="#1a1a1a")
             loading_frame.pack(fill="both", expand=True, padx=20, pady=20)
+            
+            # เพิ่มโลโก้
+            try:
+                logo_path = os.path.join(os.path.dirname(__file__), "img", "logo.png")
+                if os.path.exists(logo_path):
+                    from PIL import Image
+                    logo_img = Image.open(logo_path)
+                    # ปรับขนาดรูป
+                    logo_img = logo_img.resize((100, 100), Image.Resampling.LANCZOS)
+                    ctk_logo = ctk.CTkImage(light_image=logo_img, dark_image=logo_img, size=(100, 100))
+                    logo_label = ctk.CTkLabel(loading_frame, image=ctk_logo, text="")
+                    logo_label.image = ctk_logo
+                    logo_label.pack(pady=(10, 5))
+            except:
+                pass
             
             # โลโก้/ชื่อ
             title = ctk.CTkLabel(
@@ -477,7 +493,7 @@ objShell.MinimizeAll()
             # คำนวณตำแหน่งให้อยู่ตรงกลาง
             self.loading_window.update_idletasks()
             x = (self.loading_window.winfo_screenwidth() // 2) - (400 // 2)
-            y = (self.loading_window.winfo_screenheight() // 2) - (300 // 2)
+            y = (self.loading_window.winfo_screenheight() // 2) - (380 // 2)
             self.loading_window.geometry(f"+{x}+{y}")
             
         except Exception as e:
@@ -537,6 +553,11 @@ objShell.MinimizeAll()
         btn_manual_add = ctk.CTkButton(left_frame, text="🛒 เพิ่มลงตะกร้า ⬇️", command=self.add_item_to_cart,
                                        font=("Kanit", 16), height=40)
         btn_manual_add.pack(pady=10, fill="x", padx=10)
+        
+        # ปุ่มเพิ่มรายการแบบ manual (ค่าบริการ, อื่นๆ)
+        btn_add_manual = ctk.CTkButton(left_frame, text="➕ เพิ่มรายการอื่นๆ", command=self.add_manual_item,
+                                       font=("Kanit", 14), height=40, fg_color="#8E44AD", hover_color="#7D3C98")
+        btn_add_manual.pack(pady=10, fill="x", padx=10)
         
         # --- เพิ่มส่วนโค้ตส่วนลดลงฝั่งซ้าย ---
         ctk.CTkLabel(left_frame, text="ตัวเลือกชำระเงิน", font=("Kanit", 16, "bold")).pack(pady=(20, 10))
@@ -677,6 +698,78 @@ objShell.MinimizeAll()
             self.play_sound("error")
             messagebox.showerror("ไม่พบสินค้า", f"ไม่พบ Barcode: {barcode}")
             self.pos_barcode.delete(0, "end")
+
+    def add_manual_item(self):
+        """เพิ่มรายการแบบ manual เช่น ค่าบริการ, ค่าอื่นๆ"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("เพิ่มรายการอื่นๆ")
+        dialog.geometry("450x320")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+        
+        # ชื่อรายการ
+        ctk.CTkLabel(dialog, text="ชื่อรายการ:", font=("Kanit", 12, "bold")).pack(pady=(20, 5), padx=20, anchor="w")
+        entry_name = ctk.CTkEntry(dialog, placeholder_text="เช่น ค่าบริการ, ค่าส่วน, ค่าจัดเรียง", font=("Kanit", 11))
+        entry_name.pack(pady=(0, 15), padx=20, fill="x")
+        
+        # ราคา
+        ctk.CTkLabel(dialog, text="ราคา (บาท):", font=("Kanit", 12, "bold")).pack(pady=(0, 5), padx=20, anchor="w")
+        entry_price = ctk.CTkEntry(dialog, placeholder_text="ใส่ราคา", font=("Kanit", 11))
+        entry_price.pack(pady=(0, 15), padx=20, fill="x")
+        
+        # จำนวน (ค่าเริ่มต้น 1)
+        ctk.CTkLabel(dialog, text="จำนวน:", font=("Kanit", 12, "bold")).pack(pady=(0, 5), padx=20, anchor="w")
+        entry_qty = ctk.CTkEntry(dialog, placeholder_text="1", font=("Kanit", 11))
+        entry_qty.insert(0, "1")
+        entry_qty.pack(pady=(0, 20), padx=20, fill="x")
+        
+        def save_manual_item():
+            name = entry_name.get().strip()
+            price_str = entry_price.get().strip()
+            qty_str = entry_qty.get().strip()
+            
+            if not name:
+                messagebox.showwarning("แจ้งเตือน", "กรุณาใส่ชื่อรายการ")
+                return
+            
+            try:
+                price = float(price_str)
+            except:
+                messagebox.showerror("ข้อผิดพลาด", "กรุณาใส่ราคาเป็นตัวเลข")
+                return
+            
+            try:
+                qty = int(qty_str) if qty_str else 1
+                if qty <= 0:
+                    qty = 1
+            except:
+                qty = 1
+            
+            # ใช้ "MANUAL-" เป็น barcode สำหรับรายการแบบ manual
+            barcode = f"MANUAL-{len(self.cart_items)+1}"
+            
+            self.cart_items.append({
+                'barcode': barcode,
+                'name': name,
+                'qty': qty,
+                'price': price,
+                'total': qty * price,
+                'row_idx': -1  # ไม่มี row index เนื่องจากไม่ได้มาจาก inventory
+            })
+            
+            self.play_sound("success")
+            self.lbl_last_scan.configure(text=f"เพิ่ม: {name} (฿{price})")
+            self.update_cart_ui()
+            dialog.destroy()
+        
+        # ปุ่มบันทึก
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=20, padx=20, fill="x")
+        
+        ctk.CTkButton(btn_frame, text="✓ บันทึก", command=save_manual_item, 
+                     font=("Kanit", 12), fg_color="#27AE60", hover_color="#1E8449").pack(side="left", fill="x", expand=True, padx=(0, 10))
+        ctk.CTkButton(btn_frame, text="✕ ยกเลิก", command=dialog.destroy, 
+                     font=("Kanit", 12), fg_color="#E74C3C", hover_color="#C0392B").pack(side="left", fill="x", expand=True)
 
     def update_cart_ui(self):
         for i in self.cart_tree.get_children(): self.cart_tree.delete(i)
@@ -945,6 +1038,9 @@ objShell.MinimizeAll()
             
             self.sheet_sales.append_rows(sales_rows)
             for item in self.cart_items:
+                # ไม่ลดสต็อกสำหรับรายการแบบ manual (barcode เริ่มต้นด้วย MANUAL-)
+                if item['barcode'].startswith('MANUAL-'):
+                    continue
                 current_qty_cell = self.sheet_products.cell(int(item['row_idx']), 8).value
                 current_qty = int(current_qty_cell) if current_qty_cell else 0
                 new_qty = max(0, current_qty - item['qty'])
@@ -1576,23 +1672,51 @@ objShell.MinimizeAll()
     # TAB 3: HISTORY Logic (Updated with Barcode)
     # =========================================
     def setup_history_tab(self):
+        # เพิ่มการรีเฟรชข้อมูลเมื่อกดแท็บ
+        try:
+            original_select_tab = self.tabview._segmented_button.configure
+            def on_tab_change(*args):
+                if self.tabview.get() == "📜 ประวัติการขาย (History)":
+                    self.load_history_data()
+            self.tabview.bind("<Button-1>", lambda e: self.after(100, lambda: on_tab_change()))
+        except:
+            pass
+        
         # TOP: Filter Frame
         filter_frame = ctk.CTkFrame(self.tab_history, fg_color="gray20")
         filter_frame.pack(fill="x", padx=5, pady=5)
         
-        ctk.CTkLabel(filter_frame, text="📅 เลือกวันที่:", font=("Kanit", 12, "bold")).pack(side="left", padx=5)
+        # Single row: Search by Receipt ID + Filter by Date
+        filter_search_frame = ctk.CTkFrame(filter_frame, fg_color="transparent")
+        filter_search_frame.pack(fill="x", pady=5)
+        
+        # Receipt ID Search
+        ctk.CTkLabel(filter_search_frame, text="🔍 ค้นหาใบเสร็จ:", font=("Kanit", 12, "bold")).pack(side="left", padx=5)
+        
+        self.search_receipt_entry = ctk.CTkEntry(filter_search_frame, placeholder_text="ป้อนเลขที่ใบเสร็จ...", width=150, height=32)
+        self.search_receipt_entry.pack(side="left", padx=3)
+        self.search_receipt_entry.bind("<Return>", lambda e: self.search_receipt_by_id())
+        
+        ctk.CTkButton(filter_search_frame, text="🔎 ค้นหา", command=self.search_receipt_by_id, 
+                     width=85, height=32, border_width=2, border_color="#3498DB").pack(side="left", padx=3)
+        
+        # Separator
+        ctk.CTkLabel(filter_search_frame, text="|", font=("Kanit", 12)).pack(side="left", padx=5)
+        
+        # Date Filter
+        ctk.CTkLabel(filter_search_frame, text="📅 เลือกวันที่:", font=("Kanit", 12, "bold")).pack(side="left", padx=5)
         
         # ใช้ DateEntry (Calendar Picker) จาก tkcalendar
-        self.date_picker = DateEntry(filter_frame, width=15, background='blue',
+        self.date_picker = DateEntry(filter_search_frame, width=15, background='blue',
                                      foreground='white', borderwidth=2, year=datetime.now().year,
                                      month=datetime.now().month, day=datetime.now().day)
-        self.date_picker.pack(side="left", padx=5)
+        self.date_picker.pack(side="left", padx=3)
         
-        ctk.CTkButton(filter_frame, text="🔍 ค้นหา", command=self.apply_date_filter, 
-                     width=100, border_width=2, border_color="#3498DB").pack(side="left", padx=5)
+        ctk.CTkButton(filter_search_frame, text="🔍 ค้นหาตามวันที่", command=self.apply_date_filter, 
+                     width=130, height=32, border_width=2, border_color="#3498DB").pack(side="left", padx=3)
         
-        ctk.CTkButton(filter_frame, text="📋 ดูทั้งหมด", command=self.show_all_history, 
-                     width=100, border_width=2, border_color="#27AE60").pack(side="left", padx=5)
+        ctk.CTkButton(filter_search_frame, text="📋 ดูทั้งหมด", command=self.show_all_history, 
+                     width=100, height=32, border_width=2, border_color="#27AE60").pack(side="left", padx=3)
         
         paned = ctk.CTkFrame(self.tab_history)
         paned.pack(fill="both", expand=True)
@@ -1648,16 +1772,16 @@ objShell.MinimizeAll()
                                                   font=("Kanit", 13, "bold"), text_color="#27AE60")
         self.lbl_receipt_cancelled.pack(pady=5, padx=10, anchor="w")
         
-        # สร้าง Frame สำหรับปุ่มต่างๆ
+        # สร้าง Frame สำหรับปุ่มต่างๆ - ปรับให้มองเห็นได้ชัดเจน
         buttons_frame = ctk.CTkFrame(receipt_info_frame, fg_color="transparent")
-        buttons_frame.pack(pady=10, padx=10, anchor="e", fill="x")
+        buttons_frame.pack(pady=15, padx=10, fill="both", expand=False)
         
         # ปุ่มรีปริ้นใบเสร็จ
         self.btn_reprint_receipt = ctk.CTkButton(buttons_frame, text="🖨️ รีปริ้นใบเสร็จ", 
                                           command=self.reprint_receipt,
                                           fg_color="#3498DB", hover_color="#2980B9",
-                                          font=("Kanit", 12, "bold"),
-                                          height=40,
+                                          font=("Kanit", 12),
+                                          height=45,
                                           corner_radius=8)
         self.btn_reprint_receipt.pack(side="left", pady=5, padx=5, fill="both", expand=True)
         
@@ -1665,8 +1789,8 @@ objShell.MinimizeAll()
         self.btn_cancel_receipt = ctk.CTkButton(buttons_frame, text="🚫 ยกเลิกใบเสร็จ", 
                                           command=self.cancel_receipt,
                                           fg_color="#E74C3C", hover_color="#C0392B",
-                                          font=("Kanit", 12, "bold"),
-                                          height=40,
+                                          font=("Kanit", 12),
+                                          height=45,
                                           corner_radius=8)
         self.btn_cancel_receipt.pack(side="left", pady=5, padx=5, fill="both", expand=True)
 
@@ -1864,7 +1988,7 @@ objShell.MinimizeAll()
                 threading.Thread(target=self.run_cancel_receipt, args=(r_id,), daemon=True).start()
 
     def reprint_receipt(self):
-        """รีปริ้นใบเสร็จที่เลือก"""
+        """รีปริ้นใบเสร็จที่เลือก หรือสร้างใหม่ถ้าไม่พบไฟล์"""
         # ตรวจสอบว่ามีการเลือกใบเสร็จในตาราง
         selected = self.tree_receipts.selection()
         if not selected:
@@ -1880,8 +2004,30 @@ objShell.MinimizeAll()
         pdf_path = os.path.join(self.receipts_folder, f"{r_id}.pdf")
         
         if not os.path.exists(pdf_path):
-            messagebox.showerror("ไม่พบไฟล์", f"ไม่พบไฟล์ PDF ของใบเสร็จ {r_id}")
-            return
+            # ถ้าไม่พบไฟล์ PDF ให้สร้างใบเสร็จใหม่
+            if r_id in self.sales_history_data:
+                data = self.sales_history_data[r_id]
+                items = data.get('items', [])
+                timestamp = data.get('timestamp', '')
+                total_bill = data.get('total_bill', 0.0)
+                discount_amount = data.get('discount_amount', 0.0)
+                final_total = data.get('final_total', 0.0)
+                payment_method = data.get('payment_method', 'เงินสด')
+                used_coupon = data.get('used_coupon', '')
+                received_coupon = data.get('received_coupon', '')
+                
+                try:
+                    # สร้างใบเสร็จใหม่
+                    self.generate_receipt_pdf(r_id, timestamp, items, total_bill, discount_amount, 
+                                            final_total, payment_method, used_coupon, received_coupon)
+                    messagebox.showinfo("สร้างใบเสร็จ", f"สร้างใบเสร็จ {r_id} เรียบร้อย")
+                    pdf_path = os.path.join(self.receipts_folder, f"{r_id}.pdf")
+                except Exception as e:
+                    messagebox.showerror("ผิดพลาด", f"เกิดข้อผิดพลาดในการสร้างใบเสร็จ: {e}")
+                    return
+            else:
+                messagebox.showerror("ไม่พบข้อมูล", f"ไม่พบข้อมูลใบเสร็จ {r_id}")
+                return
         
         # ปริ้นใบเสร็จ
         try:
@@ -1993,6 +2139,41 @@ objShell.MinimizeAll()
         self.date_picker.set_date(datetime.now())
         self.update_history_ui()
         messagebox.showinfo("แสดงทั้งหมด", "แสดงประวัติการขายทั้งหมด")
+
+    def search_receipt_by_id(self):
+        """ค้นหาใบเสร็จตามเลขที่ใบเสร็จ"""
+        search_text = self.search_receipt_entry.get().strip()
+        
+        if not search_text:
+            messagebox.showwarning("ข้อผิดพลาด", "กรุณาป้อนเลขที่ใบเสร็จ")
+            return
+        
+        # ล้างตาราง
+        for item in self.tree_receipts.get_children():
+            self.tree_receipts.delete(item)
+        
+        found_count = 0
+        search_lower = search_text.lower()
+        
+        if hasattr(self, 'sales_history_data'):
+            for r_id, data in self.sales_history_data.items():
+                # ค้นหาทั้งแบบ contain และ exact match
+                if search_lower in r_id.lower():
+                    final_total = data.get('final_total', 0.0)
+                    payment_method = data.get('payment_method', '-')
+                    is_cancelled = data.get('is_cancelled', False)
+                    
+                    if is_cancelled:
+                        display_id = f"[ยกเลิก] {r_id}"
+                        item = self.tree_receipts.insert("", "end", values=(display_id, data['date'], payment_method, f"{final_total:,.2f}"))
+                        self.tree_receipts.item(item, tags=('cancelled',))
+                    else:
+                        self.tree_receipts.insert("", "end", values=(r_id, data['date'], payment_method, f"{final_total:,.2f}"))
+                    
+                    found_count += 1
+        
+        # กำหนดสี tag สำหรับแถวที่ยกเลิก
+        self.tree_receipts.tag_configure('cancelled', foreground='#E74C3C')
 
     # =========================================
     # TAB 4: DASHBOARD Logic
@@ -2521,19 +2702,21 @@ objShell.MinimizeAll()
             
             records = self.sheet_products.get_all_values()
             
-            report_text = "📦 รายงานสต็อกคงเหลือ\n" + "="*70 + "\n\n"
+            # ตั้งค่าพื้นฐาน
+            report_text = "📦 รายงานสต็อกคงเหลือ\n"
+            report_text += "=" * 90 + "\n\n"
             
             total_qty = 0
             total_value = 0.0
+            stock_items = []
             
             if len(records) > 1:
-                report_text += f"{'ลำดับ':>3} {'สินค้า':<35} {'ราคา':>12} {'จำนวน':>10} {'มูลค่า':>15}\n"
-                report_text += "-" * 80 + "\n"
-                
+                # รวบรวมข้อมูลสินค้า
                 for i, row in enumerate(records[1:], 1):
                     safe_row = (row + [""] * 15)[:15]
+                    barcode = safe_row[1] if len(safe_row) > 1 else ""  # column 2 = Barcode
                     name = safe_row[2] if len(safe_row) > 2 else ""  # column 3 = Name
-                    price_str = safe_row[5] if len(safe_row) > 5 else ""  # column 6 = Price
+                    price_str = safe_row[8] if len(safe_row) > 8 else ""  # column 9 = Price (ขาย)
                     stock_str = safe_row[7] if len(safe_row) > 7 else ""  # column 8 = Stock
                     
                     if not name:
@@ -2553,10 +2736,44 @@ objShell.MinimizeAll()
                     total_qty += stock
                     total_value += value
                     
-                    report_text += f"{i:3} {name[:35]:35} {price:>12,.2f} {stock:>10} {value:>15,.2f}\n"
+                    stock_items.append({
+                        'no': i,
+                        'barcode': barcode,
+                        'name': name,
+                        'price': price,
+                        'stock': stock,
+                        'value': value
+                    })
                 
-                report_text += "-" * 80 + "\n"
-                report_text += f"รวมทั้งหมด: {total_qty:>10} ชิ้น   มูลค่ารวม: {total_value:>15,.2f} บาท\n"
+                # แสดงส่วนหัวตาราง
+                report_text += "=" * 90 + "\n"
+                report_text += f"{'ลำดับ':<5} {'บาร์โค้ด':<15} {'ชื่อสินค้า':<35} {'ราคา':<12} {'จำนวน':<8} {'มูลค่า':<15}\n"
+                report_text += "=" * 90 + "\n"
+                
+                # แสดงรายการสินค้า
+                for item in stock_items:
+                    name_display = item['name'][:35] if len(item['name']) > 35 else item['name']
+                    report_text += f"{item['no']:<5} {item['barcode']:<15} {name_display:<35} "
+                    report_text += f"฿{item['price']:<11,.2f} {item['stock']:<8} ฿{item['value']:>13,.2f}\n"
+                
+                # แสดงรายการสรุป
+                report_text += "-" * 90 + "\n"
+                report_text += f"{'รวมทั้งหมด':<5} {'':<15} {'':<35} "
+                report_text += f"{'':<12} {total_qty:<8} ฿{total_value:>13,.2f}\n"
+                report_text += "=" * 90 + "\n\n"
+                
+                # เพิ่มสรุปสถิติ
+                low_stock_items = [item for item in stock_items if item['stock'] < 5]
+                report_text += f"📊 สรุปสถิติ:\n"
+                report_text += f"  • รวมทั้งสิ้น: {len(stock_items)} ชิ้นประเภท\n"
+                report_text += f"  • จำนวนสินค้าทั้งสิ้น: {total_qty} ชิ้น\n"
+                report_text += f"  • มูลค่าสต็อก: ฿{total_value:,.2f}\n"
+                report_text += f"  • สินค้าเหลือน้อย (< 5 ชิ้น): {len(low_stock_items)} รายการ\n"
+                
+                if low_stock_items:
+                    report_text += f"\n⚠️  สินค้าเหลือน้อย:\n"
+                    for item in low_stock_items:
+                        report_text += f"  • {item['name'][:40]} - เหลือเพียง {item['stock']} ชิ้น\n"
             else:
                 report_text += "ไม่มีข้อมูล\n"
             
@@ -2570,16 +2787,39 @@ objShell.MinimizeAll()
             print(f"Error in show_stock_report: {e}")
     
     def show_profit_report(self, records):
-        """รายงานกำไรขาดทุน"""
+        """รายงานกำไรขาดทุน - คำนวณจากสินค้าที่ขายจริงๆ"""
         try:
             total_sales = 0.0
             total_cost = 0.0
             
-            # ดึงยอดขายจาก Sales sheet
+            # สร้าง dict เก็บต้นทุนของแต่ละสินค้า
+            product_costs = {}
+            if hasattr(self, 'sheet_products') and self.sheet_products:
+                try:
+                    inv_records = self.sheet_products.get_all_values()
+                    if len(inv_records) > 1:
+                        for row in inv_records[1:]:
+                            safe_row = (row + [""] * 15)[:15]
+                            name = safe_row[2] if len(safe_row) > 2 else ""  # column 3 = Name
+                            cost_str = safe_row[6] if len(safe_row) > 6 else ""  # column 7 = Cost
+                            
+                            if name:
+                                try:
+                                    cost = float(cost_str) if cost_str else 0.0
+                                except:
+                                    cost = 0.0
+                                product_costs[name] = cost
+                except:
+                    pass
+            
+            # ดึงยอดขายและคำนวณต้นทุนจากสินค้าที่ขายไป
             if len(records) > 1:
                 for row in records[1:]:
                     safe_row = (row + [""] * 12)[:12]
-                    total_str = safe_row[6] if len(safe_row) > 6 else ""  # column 7 = Total
+                    # column 7 = Total ยอดขาย
+                    total_str = safe_row[6] if len(safe_row) > 6 else ""
+                    # ดึงชื่อสินค้าและจำนวน (ถ้ามีใน record)
+                    # ปกติใน Sales sheet อาจมีรายการสินค้าแยกต่างหาก หรืออาจต้องประมาณจากยอดขาย
                     
                     try:
                         total = float(total_str) if total_str else 0.0
@@ -2587,43 +2827,145 @@ objShell.MinimizeAll()
                         total = 0.0
                     
                     total_sales += total
-            
-            # ดึงต้นทุนจาก Products sheet
-            if not hasattr(self, 'sheet_products') or not self.sheet_products:
-                if self.app_running and self.winfo_exists():
-                    self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
-                                          self.report_text.insert("1.0", "❌ ไม่พบ Sheet Products")))
-                return
-            
-            inv_records = self.sheet_products.get_all_values()
-            
-            if len(inv_records) > 1:
-                for row in inv_records[1:]:
-                    safe_row = (row + [""] * 15)[:15]
-                    cost_str = safe_row[4] if len(safe_row) > 4 else ""  # column 5 = Cost
-                    stock_str = safe_row[7] if len(safe_row) > 7 else ""  # column 8 = Stock
                     
-                    try:
-                        cost = float(cost_str) if cost_str else 0.0
-                    except:
-                        cost = 0.0
-                    
-                    try:
-                        stock = int(stock_str) if stock_str else 0
-                    except:
-                        stock = 0
-                    
-                    total_cost += (cost * stock)
+                    # หากต้องการความแม่นยำ สามารถข้ามข้างบน
+                    # แล้วดึงข้อมูลรายการสินค้าที่ขายจาก Items/Details ใน Google Sheet
+            
+            # หากต้องการคำนวณต้นทุนจากยอดขายโดยประมาณ (ถ้าไม่มีข้อมูล qty)
+            # สามารถใช้อัตราราคาขายต่อต้นทุน แต่เป็นการประมาณ
+            # วิธีที่ดีที่สุดคือดึงข้อมูลรายการขายจริงๆ
+            
+            # ลองดึงข้อมูลรายละเอียดสินค้าที่ขายจาก Sales Items (ถ้ามี)
+            total_cost = 0.0
+            if hasattr(self, 'sheet_sales_items') and self.sheet_sales_items:
+                try:
+                    items_records = self.sheet_sales_items.get_all_values()
+                    if len(items_records) > 1:
+                        for row in items_records[1:]:
+                            safe_row = (row + [""] * 10)[:10]
+                            name = safe_row[1] if len(safe_row) > 1 else ""  # สินค้า
+                            qty_str = safe_row[2] if len(safe_row) > 2 else ""  # จำนวน
+                            
+                            if name and qty_str:
+                                try:
+                                    qty = int(qty_str) if qty_str else 0
+                                except:
+                                    qty = 0
+                                
+                                cost_per_unit = product_costs.get(name, 0.0)
+                                item_cost = cost_per_unit * qty
+                                total_cost += item_cost
+                except:
+                    # ถ้าไม่มี sheet_sales_items ให้ใช้วิธี fallback
+                    pass
+            
+            # Fallback: ถ้าดึงเรคคอร์ดขายเป็นสินค้า เราจะคำนวณจากนั้น
+            # เก็บรายละเอียดสินค้าที่ขาย (รวมรายการที่ซ้ำกัน)
+            sales_details_dict = {}  # {name: {qty, price, total, cost, profit}}
+            total_qty = 0
+            
+            if total_cost == 0.0 and hasattr(self, 'sales_history_data'):
+                # ดึงจากข้อมูลที่โหลดไปแล้ว
+                for r_id, receipt_data in self.sales_history_data.items():
+                    items = receipt_data.get('items', [])
+                    for item in items:
+                        name = item.get('name', '')
+                        qty = item.get('qty', 0)
+                        price = item.get('price', 0.0)
+                        item_total = item.get('total', 0.0)
+                        cost_per_unit = product_costs.get(name, 0.0)
+                        item_cost = cost_per_unit * qty
+                        item_profit = item_total - item_cost
+                        total_cost += item_cost
+                        total_qty += qty
+                        
+                        # รวมรายการที่มีชื่อเดียวกัน
+                        if name in sales_details_dict:
+                            sales_details_dict[name]['qty'] += qty
+                            sales_details_dict[name]['total'] += item_total
+                            sales_details_dict[name]['cost'] += item_cost
+                            sales_details_dict[name]['profit'] += item_profit
+                        else:
+                            sales_details_dict[name] = {
+                                'qty': qty,
+                                'price': price,
+                                'total': item_total,
+                                'cost': item_cost,
+                                'profit': item_profit
+                            }
+                
+                # แปลง dict เป็น list และเรียงลำดับ
+                sales_details = [
+                    {
+                        'name': name,
+                        'qty': data['qty'],
+                        'price': data['price'],
+                        'total': data['total'],
+                        'cost': data['cost'],
+                        'profit': data['profit']
+                    }
+                    for name, data in sorted(sales_details_dict.items())
+                ]
+            else:
+                sales_details = []
             
             profit = total_sales - total_cost
             profit_margin = (profit / total_sales * 100) if total_sales > 0 else 0
             
-            report_text = "💰 รายงานกำไรขาดทุน\n" + "="*70 + "\n\n"
-            report_text += f"ยอดรวมขาย:        {total_sales:>18,.2f} บาท\n"
-            report_text += f"ยอดรวมต้นทุน:     {total_cost:>18,.2f} บาท\n"
-            report_text += "-" * 60 + "\n"
-            report_text += f"กำไร/ขาดทุน:      {profit:>18,.2f} บาท\n"
-            report_text += f"อัตราผลกำไร:      {profit_margin:>18.2f} %\n"
+            # สร้างรายงาน
+            report_text = "💰 รายงานกำไรขาดทุน\n"
+            report_text += "=" * 100 + "\n\n"
+            
+            # ส่วนที่ 1: สรุปข้อมูล
+            report_text += "📊 สรุปข้อมูลการขาย\n"
+            report_text += "-" * 100 + "\n"
+            report_text += f"  รวมจำนวนรายการที่ขาย: {len(sales_details)} รายการ\n"
+            report_text += f"  รวมจำนวนสินค้า:       {total_qty} ชิ้น\n"
+            report_text += f"  ยอดรวมขาย:            ฿{total_sales:>15,.2f}\n"
+            report_text += f"  ต้นทุนสินค้าขาย:       ฿{total_cost:>15,.2f}\n"
+            report_text += "\n"
+            
+            # ส่วนที่ 2: ผลลัพธ์
+            report_text += "📈 ผลลัพธ์\n"
+            report_text += "-" * 100 + "\n"
+            
+            if profit >= 0:
+                report_text += f"  ✅ กำไรสุทธิ:     ฿{profit:>15,.2f}\n"
+            else:
+                report_text += f"  ❌ ขาดทุน:        ฿{abs(profit):>15,.2f}\n"
+            
+            report_text += f"  อัตราผลกำไร:     {profit_margin:>16.2f}%\n"
+            report_text += "\n" + "=" * 100 + "\n\n"
+            
+            # ส่วนที่ 3: รายละเอียดรายการขาย (แบบตาราง)
+            if sales_details:
+                report_text += "📋 รายละเอียดสินค้าที่ขาย\n"
+                report_text += "=" * 100 + "\n"
+                report_text += f"{'ลำดับ':<5} {'สินค้า':<30} {'จำนวน':<8} {'ราคา/หน่วย':<15} {'ยอดขาย':<15} {'ต้นทุน':<15} {'กำไร':<15}\n"
+                report_text += "-" * 100 + "\n"
+                
+                for i, detail in enumerate(sales_details, 1):
+                    name_display = detail['name'][:30] if len(detail['name']) > 30 else detail['name']
+                    report_text += f"{i:<5} {name_display:<30} {detail['qty']:<8} "
+                    report_text += f"฿{detail['price']:<14,.2f} ฿{detail['total']:<14,.2f} "
+                    report_text += f"฿{detail['cost']:<14,.2f} ฿{detail['profit']:<14,.2f}\n"
+                
+                report_text += "-" * 100 + "\n"
+                report_text += f"{'รวม':<5} {'':<30} {total_qty:<8} "
+                report_text += f"{'':<15} ฿{total_sales:<14,.2f} ฿{total_cost:<14,.2f} ฿{profit:<14,.2f}\n"
+                report_text += "=" * 100 + "\n\n"
+            
+            # ส่วนที่ 4: สรุปผล
+            report_text += "💡 สรุปผล\n"
+            if profit > 0:
+                report_text += f"✅ ธุรกิจมีกำไร {profit_margin:.2f}%\n"
+                report_text += f"   ทำรายได้ ฿{profit:,.2f} จากการขาย {len(sales_details)} รายการ\n"
+                report_text += f"   เฉลี่ยกำไรต่อรายการ: ฿{(profit / len(sales_details) if len(sales_details) > 0 else 0):,.2f}\n"
+            elif profit < 0:
+                report_text += f"⚠️  ธุรกิจขาดทุน {abs(profit_margin):.2f}%\n"
+                report_text += f"   ขาดทุน ฿{abs(profit):,.2f} ต้องตรวจสอบต้นทุน\n"
+            else:
+                report_text += "⚖️  ยอดขายและต้นทุนสมดุลกัน (ไม่กำไร-ไม่ขาดทุน)\n"
             
             if self.app_running and self.winfo_exists():
                 self.after(0, lambda: (self.report_text.delete("1.0", "end"), 
@@ -4542,7 +4884,7 @@ https://developers.facebook.com/tools/explorer/
 
     def generate_receipt_pdf(self, receipt_id, timestamp, items, total_bill, discount_amount, 
                             final_total, payment_method, used_coupon, received_coupon):
-        """สร้างไฟล์ PDF ใบเสร็จ
+        """สร้างไฟล์ PDF ใบเสร็จด้วย fpdf2 รองรับภาษาไทย
         
         Args:
             receipt_id: เลขที่ใบเสร็จ
@@ -4556,158 +4898,162 @@ https://developers.facebook.com/tools/explorer/
             received_coupon: โค้ตที่ได้รับ
         """
         try:
-            # คำนวณความสูงของ PDF (80mm กว้าง)
-            page_width = 80 * mm
-            
-            # สร้างไฟล์ PDF
             pdf_path = os.path.join(self.receipts_folder, f"{receipt_id}.pdf")
             
-            # ใช้ canvas สำหรับการวาดรูป
-            from reportlab.pdfgen import canvas as pdf_canvas
-            from reportlab.lib.pagesizes import landscape
+            # สร้าง PDF ด้วย fpdf2
+            from fpdf import XPos, YPos
+            pdf = FPDF(format=(80, 200), unit="mm")
+            pdf.add_page()
             
-            # สร้าง PDF document
-            doc = SimpleDocTemplate(pdf_path, pagesize=(80*mm, 300*mm),
-                                   topMargin=3*mm, bottomMargin=3*mm, 
-                                   leftMargin=3*mm, rightMargin=3*mm)
+            # เพิ่ม Kanit font สำหรับภาษาไทย
+            import sys
+            if sys.platform == 'win32':
+                font_dir = os.path.expanduser(r'~\AppData\Local\Microsoft\Windows\Fonts')
+            else:
+                font_dir = os.path.expanduser('~/.local/share/fonts')
             
-            # เตรียมรายการสำหรับเพิ่มเข้า PDF
-            story = []
-            styles = getSampleStyleSheet()
+            # ค้นหาฟอนต์ไทยที่มีอยู่ - ลองแต่ละตัวตามลำดับ
+            thai_font = None
+            font_names = ['TH SarabunPSK.ttf', 'THSarabunNew.ttf', 'Kanit-Regular.ttf', 'tahoma.ttf']
             
-            # ตรวจสอบและใช้ฟอนต์ไทยที่ลงทะเบียน
-            thai_font = 'KanitRegular' if _is_kanit_registered() else 'Helvetica'
+            for font_name in font_names:
+                font_path = os.path.join(font_dir, font_name)
+                if os.path.exists(font_path):
+                    font_clean_name = font_name.replace('.ttf', '').replace(' ', '')
+                    try:
+                        pdf.add_font(font_clean_name, "", font_path)
+                        thai_font = font_clean_name
+                        break
+                    except:
+                        continue
             
-            # สไตล์สำหรับหัวข้อ
-            title_style = ParagraphStyle(
-                'CustomTitle',
-                parent=styles['Normal'],
-                fontName=thai_font,
-                fontSize=11,
-                textColor=colors.black,
-                alignment=TA_CENTER,
-                spaceAfter=3
-            )
+            # ถ้าไม่เจอฟอนต์ไทย ให้แจ้ง error แทนใช้ fallback เสียหายหาย
+            if thai_font is None:
+                raise Exception(f"ไม่พบฟอนต์ไทยใน {font_dir}. โปรดติดตั้ง Kanit หรือ TH Sarabun PSK")
             
-            # สไตล์สำหรับข้อมูลปกติ
-            normal_style = ParagraphStyle(
-                'CustomNormal',
-                parent=styles['Normal'],
-                fontName=thai_font,
-                fontSize=8,
-                textColor=colors.black,
-                alignment=TA_CENTER,
-                spaceAfter=2
-            )
+            # Set margin
+            pdf.set_margins(3, 3, 3)
             
-            # ชื่อร้าน
-            story.append(Paragraph("CHI SERVICE", title_style))
-            story.append(Paragraph("JZ Auto Parts", normal_style))
-            story.append(Spacer(1, 2*mm))
-            
-            # เส้นคั่น
-            story.append(Paragraph("=" * 28, normal_style))
-            story.append(Spacer(1, 2*mm))
-            
-            # ข้อมูลใบเสร็จ
-            date_time = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
-            receipt_info = [
-                f"เลขที่: {receipt_id}",
-                f"วันที่: {date_time.strftime('%d/%m/%Y')}",
-                f"เวลา: {date_time.strftime('%H:%M:%S')}"
-            ]
-            for info in receipt_info:
-                story.append(Paragraph(info, normal_style))
-            
-            story.append(Spacer(1, 2*mm))
-            
-            # ตารางรายการสินค้า
-            table_data = [["สินค้า", "จำนวน", "ราคา", "รวม"]]
-            
-            for item in items:
-                table_data.append([
-                    item['name'][:15],  # จำกัดความยาวชื่อ
-                    str(item['qty']),
-                    f"{item['price']:.2f}",
-                    f"{item['total']:.2f}"
-                ])
-            
-            # สร้างตาราง
-            table = Table(table_data, colWidths=[25*mm, 12*mm, 15*mm, 15*mm])
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), thai_font),
-                ('FONTSIZE', (0, 0), (-1, -1), 7),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 2),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
-            ]))
-            
-            story.append(table)
-            story.append(Spacer(1, 2*mm))
-            
-            # เส้นคั่น
-            story.append(Paragraph("=" * 28, normal_style))
-            story.append(Spacer(1, 1*mm))
-            
-            # สรุปยอดขาย
-            summary_style = ParagraphStyle(
-                'CustomSummary',
-                parent=styles['Normal'],
-                fontName=thai_font,
-                fontSize=9,
-                textColor=colors.black,
-                alignment=TA_RIGHT,
-                spaceAfter=1
-            )
-            
-            story.append(Paragraph(f"ยอดรวม: {total_bill:,.2f} บาท", summary_style))
-            
-            if discount_amount > 0:
-                story.append(Paragraph(f"ส่วนลด: -{discount_amount:,.2f} บาท", summary_style))
-            
-            story.append(Paragraph(f"ยอดสุดท้าย: {final_total:,.2f} บาท", summary_style))
-            
-            story.append(Spacer(1, 2*mm))
-            
-            # วิธีชำระเงิน
-            story.append(Paragraph(f"วิธีจ่าย: {payment_method}", normal_style))
-            
-            # โค้ต
-            if used_coupon and used_coupon != "-":
-                story.append(Paragraph(f"โค้ตที่ใช้: {used_coupon}", normal_style))
-            
-            if received_coupon and received_coupon != "-":
-                story.append(Paragraph(f"โค้ตใหม่: {received_coupon}", normal_style))
-            
-            story.append(Spacer(1, 3*mm))
-            
-            # QR Code
+            # เพิ่มโลโก้บนหัวใบเสร็จ
             try:
-                qr_img = self._generate_barcode_image(receipt_id)
-                if qr_img:
-                    story.append(Paragraph(receipt_id, normal_style))
-                    qr_path = os.path.join(self.receipts_folder, f"{receipt_id}_qr.png")
-                    qr_img.save(qr_path)
-                    story.append(RLImage(qr_path, width=40*mm, height=40*mm))
+                logo_path = os.path.join(os.path.dirname(__file__), "img", "logo.png")
+                if os.path.exists(logo_path):
+                    pdf.image(logo_path, x=30, y=5, w=20, h=20)
+                    pdf.ln(24)  # เพิ่มระยะห่างให้เพียงพอ (โลโก้สูง 20mm)
             except:
                 pass
             
-            story.append(Spacer(1, 2*mm))
+            # ชื่อร้าน - use Helvetica for English
+            pdf.set_font("Helvetica", "B", 13)
+            pdf.cell(0, 6, "JZ Auto Parts", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            pdf.set_font(thai_font, "", 9)
+            pdf.cell(0, 4, "ร้านอะไหล่รถ JZ", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            
+            # เส้นคั่น
+            pdf.set_font(thai_font, "", 7)
+            pdf.cell(0, 3, "=" * 30, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            
+            # ข้อมูลใบเสร็จ - เลขซ้าย เวลาขวา
+            # จัดการกรณี timestamp เป็นค่าว่าง
+            if timestamp and timestamp.strip():
+                try:
+                    date_time = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    # ถ้า format ไม่ตรง ใช้เวลาปัจจุบัน
+                    date_time = datetime.now()
+            else:
+                # ถ้า timestamp เป็นค่าว่าง ใช้เวลาปัจจุบัน (เวลาออกใบเสร็จจริง)
+                date_time = datetime.now()
+            
+            pdf.set_font(thai_font, "", 9)
+            pdf.cell(40, 4, f"เลขที่ใบเสร็จ : {receipt_id}", border=0, align="L", new_x=XPos.LEFT, new_y=YPos.TOP)
+            pdf.cell(0, 4, f"เวลา : {date_time.strftime('%d/%m/%Y %H:%M:%S')}", border=0, align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            
+            pdf.ln(2)
+            
+            # ตารางรายการสินค้า
+            col_widths = [25, 12, 15, 16]
+            pdf.set_font(thai_font, "", 10)
+            # หัวตารางพื้นหลังสีเทา (ทดแทน bold)
+            pdf.set_fill_color(200, 200, 200)
+            pdf.cell(col_widths[0], 4, "สินค้า", border=1, align="C", fill=True)
+            pdf.cell(col_widths[1], 4, "จำนวน", border=1, align="C", fill=True) 
+            pdf.cell(col_widths[2], 4, "ราคา", border=1, align="C", fill=True)
+            pdf.cell(col_widths[3], 4, "รวม", border=1, align="C", fill=True, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.set_fill_color(255, 255, 255)
+            
+            # รายการสินค้า
+            pdf.set_font(thai_font, "", 10)
+            for item in items:
+                name = item['name'][:12] if len(item['name']) > 12 else item['name']
+                pdf.cell(col_widths[0], 4, name, border=1, align="C")
+                pdf.cell(col_widths[1], 4, str(item['qty']), border=1, align="C")
+                pdf.cell(col_widths[2], 4, f"{item['price']:.2f}", border=1, align="C")
+                pdf.cell(col_widths[3], 4, f"{item['total']:.2f}", border=1, align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            
+            pdf.ln(1)
+            
+            # เส้นคั่น
+            pdf.set_font(thai_font, "", 7)
+            pdf.cell(0, 3, "=" * 30, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            
+            # สรุปยอดขาย
+            pdf.set_font(thai_font, "", 9)
+            pdf.cell(0, 4, f"ยอดรวม : {total_bill:,.2f} บาท", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="R")
+            
+            if discount_amount > 0:
+                pdf.cell(0, 4, f"ส่วนลด : -{discount_amount:,.2f} บาท", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="R")
+            
+            pdf.cell(0, 4, f"ยอดที่จ่าย : {final_total:,.2f} บาท", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="R")
+
+            if used_coupon and used_coupon != "-":
+                pdf.cell(0, 4, f"โค้ตที่ใช้ : {used_coupon}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="R")
+            
+            pdf.ln(2)
+            
+            # วิธีชำระเงิน
+            pdf.set_font(thai_font, "", 9)
+            pdf.cell(0, 4, f"วิธีจ่าย : {payment_method}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
+            
+            # โค้ต
+            
+            if received_coupon and received_coupon != "-":
+                pdf.cell(0, 4, f"โค้ตส่วนลดที่ได้รับ : {received_coupon}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
+            
+            pdf.ln(2)
+            
+            # QR Code - ส่วนลดที่ได้รับ
+            try:
+                # ถ้ามีโค้ตที่ได้รับ ให้แสดง QR Code ของโค้ตนั้น
+                qr_code_data = received_coupon if (received_coupon and received_coupon != "-") else receipt_id
+                qr_img = self._generate_barcode_image(qr_code_data)
+                if qr_img:
+                    qr_path = os.path.join(self.receipts_folder, f"{receipt_id}_qr.png")
+                    qr_img.save(qr_path)
+                    
+                    # วาง QR Code ตรงกลาง (ขนาด 38x38mm)
+                    # ไม่แสดงเลขใบเสร็จด้านบน เอาไปแล้ว
+                    pdf.image(qr_path, x=21, y=pdf.get_y(), w=38, h=38)
+                    pdf.ln(40)
+            except:
+                pass
+            
+            pdf.ln(1)
             
             # ข้อความปิด
-            story.append(Paragraph("=" * 28, normal_style))
-            story.append(Spacer(1, 1*mm))
-            story.append(Paragraph("ขอบคุณสำหรับการเลือกสินค้า", title_style))
-            story.append(Paragraph("THANK YOU FOR YOUR VISIT", normal_style))
-            story.append(Spacer(1, 2*mm))
-            story.append(Paragraph("www.yourwebsite.com", normal_style))
-            story.append(Paragraph("Tel: 0xx-xxx-xxxx", normal_style))
+            pdf.set_font(thai_font, "", 10)
+            pdf.cell(0, 3, "=" * 30, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
             
-            # สร้าง PDF
-            doc.build(story)
+            pdf.set_font(thai_font, "", 10)
+            pdf.cell(0, 4, "ขอบคุณสำหรับการใช้บริการ", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            
+            
+            pdf.set_font(thai_font, "", 10)
+            pdf.cell(0, 3, "facebook: PKN เครื่องเลื้อยไม้ เครื่องตัดหญ้า ราคาถูก", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            pdf.cell(0, 3, "Tel: 086-283-6944", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            
+            # บันทึก PDF
+            pdf.output(pdf_path)
             
             print(f"✓ สร้างใบเสร็จ PDF: {pdf_path}")
             return pdf_path
@@ -4825,18 +5171,9 @@ https://developers.facebook.com/tools/explorer/
     def _show_receipt_options(self, pdf_path):
         """แสดงตัวเลือกสำหรับใบเสร็จ (ดู, ปริ้น, บันทึก)"""
         try:
-            dialog = messagebox.showinfo(
-                "ใบเสร็จ",
-                f"สร้างใบเสร็จสำเร็จ!\n\n"
-                f"ไฟล์บันทึก: {pdf_path}\n\n"
-                f"ต้องการ:\n"
-                f"• ปริ้น: กด 'ตกลง' และจะปริ้นอัตโนมัติ\n"
-                f"• ดู: เปิดไฟล์ด้วย Preview"
-            )
-            
-            # ถ้าตกลง ให้ปริ้น
-            if dialog is not None:
-                self.print_receipt(pdf_path)
+            # เปิด PDF preview ให้ดู
+            import subprocess
+            subprocess.Popen(['start', pdf_path], shell=True)
             
         except Exception as e:
             print(f"✗ แสดงตัวเลือกใบเสร็จไม่สำเร็จ: {e}")

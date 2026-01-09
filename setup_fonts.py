@@ -9,30 +9,34 @@ import sys
 import urllib.request
 import matplotlib.font_manager as fm
 
-def setup_kanit_font():
-    """ดาวน์โหลดและติดตั้ง Kanit font"""
+def setup_thai_fonts():
+    """ดาวน์โหลดและติดตั้ง Thai fonts (Kanit + THSarabunNew)"""
     
     # กำหนดเส้นทางตามระบบปฏิบัติการ
     if sys.platform == 'win32':
         font_dir = os.path.expanduser(r'~\AppData\Local\Microsoft\Windows\Fonts')
-        font_name = 'Kanit-Regular.ttf'
     elif sys.platform == 'darwin':  # macOS
         font_dir = os.path.expanduser('~/Library/Fonts')
-        font_name = 'Kanit-Regular.ttf'
     else:  # Linux
         font_dir = os.path.expanduser('~/.local/share/fonts')
-        font_name = 'Kanit-Regular.ttf'
     
-    font_path = os.path.join(font_dir, font_name)
-    
-    # ตรวจสอบว่าฟอนต์มีอยู่แล้วหรือไม่
-    if os.path.exists(font_path):
-        print(f"✓ Kanit font already exists at: {font_path}")
-        return True
+    # รายชื่อฟอนต์ที่ต้องติดตั้ง
+    fonts_to_install = [
+        {
+            'name': 'Kanit-Regular.ttf',
+            'url': 'https://github.com/google/fonts/raw/main/ofl/kanit/Kanit-Regular.ttf',
+            'display_name': 'Kanit-Regular'
+        },
+        {
+            'name': 'THSarabunNew.ttf',
+            'url': 'https://github.com/bringtojz2025/stock-pos-system/raw/main/fonts/THSarabunNew.ttf',
+            'display_name': 'TH Sarabun New'
+        }
+    ]
     
     try:
         print("=" * 60)
-        print("📥 Kanit Font Installer for Matplotlib")
+        print("📥 Thai Fonts Installer")
         print("=" * 60)
         print(f"Target directory: {font_dir}")
         print()
@@ -40,23 +44,32 @@ def setup_kanit_font():
         # สร้างโฟลเดอร์ถ้ายังไม่มี
         os.makedirs(font_dir, exist_ok=True)
         
-        # ดาวน์โหลด Kanit font จาก Google Fonts
-        font_url = "https://github.com/google/fonts/raw/main/ofl/kanit/Kanit-Regular.ttf"
+        installed_count = 0
         
-        print("⏳ Downloading Kanit-Regular.ttf from Google Fonts...")
-        print(f"   URL: {font_url}")
+        for font_info in fonts_to_install:
+            font_name = font_info['name']
+            font_url = font_info['url']
+            display_name = font_info['display_name']
+            font_path = os.path.join(font_dir, font_name)
+            
+            # ตรวจสอบว่าฟอนต์มีอยู่แล้วหรือไม่
+            if os.path.exists(font_path):
+                print(f"✓ {display_name} already exists")
+                installed_count += 1
+                continue
+            
+            try:
+                print(f"⏳ Downloading {display_name}...")
+                print(f"   URL: {font_url}")
+                urllib.request.urlretrieve(font_url, font_path)
+                print(f"✓ {display_name} installed successfully!")
+                installed_count += 1
+            except Exception as e:
+                print(f"✗ Failed to install {display_name}: {e}")
+                continue
         
-        urllib.request.urlretrieve(font_url, font_path)
-        print(f"✓ Font downloaded successfully!")
-        print(f"   Saved to: {font_path}")
-        
-        # ลองเพิ่มฟอนต์เข้า matplotlib
-        try:
-            fm.fontManager.addfont(font_path)
-            print("✓ Font registered with matplotlib")
-        except:
-            print("⚠ Could not register font with matplotlib immediately")
-            print("  It will be available after restarting Python/the app")
+        print()
+        print(f"Installed: {installed_count}/{len(fonts_to_install)} fonts")
         
         print()
         print("=" * 60)
@@ -65,7 +78,7 @@ def setup_kanit_font():
         print()
         print("Note: You may need to restart the app for changes to take effect")
         
-        return True
+        return installed_count > 0
         
     except Exception as e:
         print()
@@ -89,14 +102,15 @@ def check_available_fonts():
     
     available_fonts = sorted(fm.fontManager.ttflist, key=lambda x: x.name)
     
-    kanit_found = False
+    found_fonts = []
     for font in available_fonts:
-        if 'kanit' in font.name.lower():
-            print(f"✓ {font.name} (Kanit)")
-            kanit_found = True
+        name_lower = font.name.lower()
+        if any(x in name_lower for x in ['kanit', 'sarabun', 'thsarabun']):
+            print(f"✓ {font.name}")
+            found_fonts.append(font.name)
     
-    if not kanit_found:
-        print("✗ Kanit font not found")
+    if not found_fonts:
+        print("✗ Thai fonts not found")
         print("\nOther Thai-compatible fonts:")
         for font in available_fonts:
             name_lower = font.name.lower()
@@ -105,6 +119,6 @@ def check_available_fonts():
 
 if __name__ == "__main__":
     print()
-    setup_kanit_font()
+    setup_thai_fonts()
     check_available_fonts()
     print()
