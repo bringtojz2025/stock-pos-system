@@ -223,8 +223,8 @@ class StockManagerApp(ctk.CTk):
                 self.sheet_sales = self.sh.worksheet("Sales")
             except:
                 try:
-                    self.sheet_sales = self.sh.add_worksheet(title="Sales", rows="1000", cols="14")
-                    self.sheet_sales.append_row(["ReceiptID", "Date", "CustomerPhone", "CustomerName", "Barcode", "Name", "Qty", "UnitPrice", "Total", "UsedCoupon", "DiscountAmount", "PaymentMethod", "ReceivedCoupon", "Cancel"])
+                    self.sheet_sales = self.sh.add_worksheet(title="Sales", rows="1000", cols="15")
+                    self.sheet_sales.append_row(["ReceiptID", "Date", "CustomerPhone", "CustomerName", "Barcode", "Name", "Qty", "UnitPrice", "Total", "UsedCoupon", "DiscountAmount", "PaymentMethod", "ReceivedCoupon", "VAT", "Cancel"])
                 except:
                     self.sheet_sales = self.sh.sheet1
             
@@ -257,6 +257,16 @@ class StockManagerApp(ctk.CTk):
                     self.sheet_customers.append_row(["CustomerID", "FullName", "Nickname", "Birthday", "Phone", "Address", "Vehicle", "LicensePlate", "LastVisit", "TotalSpent", "AvailableCoupons", "Notes"])
                 except:
                     self.sheet_customers = None
+            
+            # เพิ่ม Cut_Stock sheet สำหรับบันทึกการตัดสต็อกเวลาชำระเงิน
+            try:
+                self.sheet_cut_stock = self.sh.worksheet("Cut_Stock")
+            except:
+                try:
+                    self.sheet_cut_stock = self.sh.add_worksheet(title="Cut_Stock", rows="5000", cols="7")
+                    self.sheet_cut_stock.append_row(["ReceiptID", "Date", "Barcode", "Name", "Qty", "OldStock", "NewStock"])
+                except:
+                    self.sheet_cut_stock = None
         except Exception as e:
             print(f"Connection Error: {e}")
             import traceback; traceback.print_exc()
@@ -272,6 +282,9 @@ class StockManagerApp(ctk.CTk):
         # ตั้งค่าเริ่มต้นสำหรับปริ้นใบเสร็จ
         self.receipt_auto_print = False  # ปริ้นอัตโนมัติหรือไม่
         self.load_receipt_settings()
+        
+        # ตั้งค่า ttk.Style สำหรับตารางทั้งหมด (ก่อนสร้าง treeview)
+        self.setup_treeview_styles()
 
         # ตั้งขนาด window เริ่มต้น
         self.geometry("1200x900")
@@ -338,6 +351,38 @@ class StockManagerApp(ctk.CTk):
         return creds
 
     def get_next_receipt_id(self):
+        """ดึงเลขที่ใบเสร็จถัดไป (รูปแบบ: JZYYYYMMDD+seq)"""
+        try:
+            today_str = datetime.now().strftime("%Y%m%d")
+            prefix = f"JZ{today_str}"
+            existing_ids = self.sheet_sales.col_values(1)
+            max_seq = 0
+            for r_id in existing_ids:
+                if str(r_id).startswith(prefix):
+                    try:
+                        suffix = r_id.replace(prefix, "")
+                        seq = int(suffix)
+                        if seq > max_seq: max_seq = seq
+                    except: pass
+            next_seq = max_seq + 1
+            return f"{prefix}{next_seq:03d}"
+        except Exception as e:
+            print(f"Error getting receipt ID: {e}")
+            return f"JZ{datetime.now().strftime('%Y%m%d')}001"
+
+    def setup_treeview_styles(self):
+        """ตั้งค่า ttk.Style สำหรับตารางทั้งหมด"""
+        style = ttk.Style()
+        # ตั้งค่า default style สำหรับ treeview โดยไม่ใช้ custom style names
+        # (เพราะ ttk.Style ใน tkinter มี layout จำกัด)
+        try:
+            # ตั้ง default font สำหรับ treeview
+            style.configure("Treeview", font=("Kanit", 10))
+            style.configure("Treeview.Heading", font=("Kanit", 11, "bold"))
+        except:
+            pass
+
+    def get_next_receipt_id(self):
         try:
             today_str = datetime.now().strftime("%Y%m%d")
             prefix = f"JZ{today_str}"
@@ -381,7 +426,7 @@ class StockManagerApp(ctk.CTk):
             ("📊 ภาพรวม", "dashboard", row2_frame),
             ("📈 รายงาน", "reports", row2_frame),
             ("🏭 ซัพพลายเออร์", "suppliers", row2_frame),
-            ("🤖 AI & Social Media", "ai_social", row2_frame),
+            ("⚙️ ตั้งค่า", "settings", row2_frame),
         ]
         
         # สร้าง tab buttons และ frames
@@ -423,7 +468,7 @@ class StockManagerApp(ctk.CTk):
         self.tab_dashboard = self.tab_frames['dashboard']['frame']
         self.tab_reports = self.tab_frames['reports']['frame']
         self.tab_suppliers = self.tab_frames['suppliers']['frame']
-        self.tab_ai_social = self.tab_frames['ai_social']['frame']
+        self.tab_settings = self.tab_frames['settings']['frame']
         
         # ตั้งค่าแท็บแรกให้เป็นค่าเริ่มต้น
         self.switch_tab('pos')
@@ -440,8 +485,13 @@ class StockManagerApp(ctk.CTk):
         self.tab_frames[tab_key]['button'].configure(fg_color="#2CC985", border_color="#1B8A4C")
         self.current_tab = tab_key
         
-        # เรียก setup function ถ้ายังไม่เรียกมาก่อน
-        if not self.tab_frames[tab_key]['setup_done']:
+        # UI ทั้งหมดถูกสร้างแล้วตอนเปิดโปรแกรม ไม่ต้องโหลดเพิ่มเติม
+
+    def create_layout_and_load_data(self):
+        """สร้าง layout และโหลดข้อมูลทั้งหมดตอนเปิดโปรแกรม"""
+        self.create_layout()
+        # เตรียม UI ทั้งหมดตั้งแต่ต้น (setup_done = True)
+        for tab_key in self.tab_frames:
             setup_methods = {
                 'pos': self.setup_pos_tab,
                 'history': self.setup_history_tab,
@@ -450,16 +500,13 @@ class StockManagerApp(ctk.CTk):
                 'dashboard': self.setup_dashboard_tab,
                 'reports': self.setup_reports_tab,
                 'suppliers': self.setup_suppliers_tab,
-                'ai_social': self.setup_ai_social_tab,
+                'settings': self.setup_settings_tab,
             }
             if tab_key in setup_methods:
                 setup_methods[tab_key]()
                 self.tab_frames[tab_key]['setup_done'] = True
-
-    def create_layout_and_load_data(self):
-        """สร้าง layout และโหลดข้อมูล"""
-        self.create_layout()
-        # โหลดข้อมูลต่างๆ ในเธรดแยก
+        
+        # โหลดข้อมูลต่างๆ ในเธรดแยก (ไม่ให้ค้างหน้าจอ)
         threading.Thread(target=self.load_all_data_background, daemon=True).start()
 
     def load_all_data_background(self):
@@ -467,12 +514,16 @@ class StockManagerApp(ctk.CTk):
         if not self.app_running:
             return
         try:
-            # โหลดข้อมูล inventory
+            # โหลดข้อมูล inventory (สินค้า)
             self.load_inventory_data()
-            # โหลด history
+            # โหลด history (ประวัติการขาย)
             self.load_history_data()
-            # อัปเดต dashboard
+            # อัปเดต dashboard (ภาพรวม)
             self.update_dashboard()
+            # โหลดข้อมูลลูกค้า
+            self.load_customers_data()
+            # โหลดข้อมูลซัพพลายเออร์
+            self.load_suppliers()
             
             # ซ่อน loading screen
             if self.app_running and self.winfo_exists():
@@ -646,6 +697,11 @@ objShell.MinimizeAll()
 
         self.pos_barcode = self.create_styled_entry(left_frame, "Scan Barcode Here...", "BARCODE")
         self.pos_barcode.bind('<Return>', self.add_item_to_cart)
+        
+        # ปุ่มสแกน QR/Barcode
+        btn_scan = ctk.CTkButton(left_frame, text="📱 สแกน QR / Barcode", command=self.open_barcode_input_dialog,
+                                font=("Kanit", 14), height=40, fg_color="#3498DB", hover_color="#2980B9")
+        btn_scan.pack(pady=10, fill="x", padx=10)
 
         self.lbl_last_scan = ctk.CTkLabel(left_frame, text="-", font=("Kanit", 18), text_color="gray")
         self.lbl_last_scan.pack(pady=10)
@@ -703,9 +759,9 @@ objShell.MinimizeAll()
         payment_frame = ctk.CTkFrame(left_frame, fg_color="gray25")
         payment_frame.pack(fill="x", padx=10, pady=5)
         ctk.CTkLabel(payment_frame, text="ประเภทการจ่าย:", font=("Kanit", 14)).pack(anchor="w", padx=10, pady=5)
-        self.payment_method = ctk.CTkComboBox(payment_frame, values=["Cash", "QR Code", "Credit Card"], 
+        self.payment_method = ctk.CTkComboBox(payment_frame, values=["PromptPay","Cash","QR Code", "Credit Card"], 
                                               font=("Kanit", 12))
-        self.payment_method.set("Cash")
+        self.payment_method.set("PromptPay")
         self.payment_method.pack(fill="x", padx=10, pady=5)
 
         # เพิ่มส่วนตั้งค่าใบเสร็จ
@@ -1011,6 +1067,120 @@ objShell.MinimizeAll()
         ctk.CTkButton(dialog, text="ปิด", command=dialog.destroy, 
                      font=("Kanit", 14), fg_color="#E74C3C", hover_color="#C0392B", height=45).pack(pady=15, padx=10, fill="x")
 
+    def open_barcode_input_dialog(self):
+        """เปิด dialog สำหรับ input QR / Barcode + ราคา (สำหรับการสแกนด้วยมือหรือจากอื่นๆ)"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("📱 สแกน QR / Barcode")
+        dialog.geometry("500x420")
+        dialog.resizable(False, False)
+        self.after(100, lambda: self.center_window(dialog))
+        
+        # หัวข้อ
+        ctk.CTkLabel(dialog, text="📱 สแกน QR Code หรือ Barcode", font=("Kanit", 18, "bold")).pack(pady=20)
+        
+        # Barcode input
+        ctk.CTkLabel(dialog, text="Barcode / QR Code:", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=20, anchor="w")
+        entry_barcode = ctk.CTkEntry(dialog, placeholder_text="วาง QR / Barcode Scanner ที่นี่", font=("Kanit", 11))
+        entry_barcode.pack(pady=(0, 15), padx=20, fill="x")
+        entry_barcode.focus()
+        
+        # ราคา (optional - ถ้าต้องการแทนที่ราคาจาก inventory)
+        ctk.CTkLabel(dialog, text="ราคาสินค้า (ไม่บังคับ - ใช้ราคาจาก Inventory ถ้าว่าง):", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=20, anchor="w")
+        entry_price = ctk.CTkEntry(dialog, placeholder_text="เว้นว่างเพื่อใช้ราคา Inventory", font=("Kanit", 11))
+        entry_price.pack(pady=(0, 15), padx=20, fill="x")
+        
+        # ข้อความแนะนำ
+        hint_frame = ctk.CTkFrame(dialog, fg_color="gray20", corner_radius=8)
+        hint_frame.pack(pady=15, padx=20, fill="x")
+        ctk.CTkLabel(hint_frame, text="💡 วิธีใช้:\n1. วาง QR/Barcode Scanner ที่ช่อง Barcode\n2. (ไม่บังคับ) ใส่ราคาในช่องราคาถ้าต้องการแทนที่\n3. กด Enter หรือ ปุ่ม เพิ่มลงตะกร้า", 
+                        font=("Kanit", 11), text_color="gray", justify="left").pack(padx=15, pady=15)
+        
+        def add_from_dialog():
+            try:
+                barcode = entry_barcode.get().strip()
+                price_input = entry_price.get().strip()
+                
+                if not barcode:
+                    messagebox.showwarning("แจ้งเตือน", "กรุณากรอก Barcode / QR Code")
+                    entry_barcode.focus()
+                    return
+                
+                # ค้นหาสินค้าจาก inventory
+                if not self.all_inventory_data:
+                    self.load_inventory_data()
+                
+                found_product = None
+                for idx, row in self.all_inventory_data:
+                    if str(row[1]).strip() == barcode:
+                        found_product = (idx, row)
+                        break
+                
+                if found_product:
+                    row_idx, data = found_product
+                    name = data[2]
+                    
+                    # ใช้ราคาจาก input ถ้ามี ไม่เช่นใช้ราคาจาก inventory
+                    if price_input:
+                        try:
+                            price = float(price_input)
+                        except:
+                            messagebox.showerror("ข้อผิดพลาด", "กรุณาใส่ราคาเป็นตัวเลข")
+                            entry_price.focus()
+                            return
+                    else:
+                        try:
+                            price = float(data[8]) if len(data) > 8 else 0.0
+                        except:
+                            price = 0.0
+                    
+                    try:
+                        current_stock = int(data[7]) if len(data) > 7 and data[7] else 0
+                    except:
+                        current_stock = 0
+                    
+                    qty_in_cart = sum(item['qty'] for item in self.cart_items if item['barcode'] == barcode)
+                    if qty_in_cart + 1 > current_stock:
+                        messagebox.showwarning("สต็อกหมด", f"สินค้า '{name}' เหลือเพียง {current_stock} ชิ้น")
+                        return
+                
+                existing_item = next((item for item in self.cart_items if item['barcode'] == barcode), None)
+                if existing_item:
+                    existing_item['qty'] += 1
+                    existing_item['total'] = existing_item['qty'] * existing_item['price']
+                else:
+                    self.cart_items.append({
+                        'barcode': barcode, 'name': name, 'qty': 1, 'price': price,
+                        'total': price, 'row_idx': row_idx
+                    })
+                
+                self.play_sound("success")
+                self.lbl_last_scan.configure(text=f"เพิ่ม: {name} (฿{price:,.2f})")
+                self.update_cart_ui()
+                dialog.destroy()
+                
+            except Exception as inner_error:
+                print(f"Error while adding: {inner_error}")
+                messagebox.showerror("ข้อผิดพลาด", f"เกิดข้อผิดพลาด: {inner_error}")
+                return
+            
+            if not found_product:
+                messagebox.showerror("ไม่พบสินค้า", f"ไม่พบ Barcode: {barcode}\n\nกรุณาตรวจสอบและลองใหม่")
+                entry_barcode.delete(0, "end")
+                entry_barcode.focus()
+        
+        # Bind Enter key
+        entry_barcode.bind('<Return>', lambda e: add_from_dialog())
+        entry_price.bind('<Return>', lambda e: add_from_dialog())
+        
+        # ปุ่มบันทึก
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(pady=15, padx=20, fill="x")
+        
+        ctk.CTkButton(btn_frame, text="✓ เพิ่มลงตะกร้า", command=add_from_dialog, 
+                     font=("Kanit", 12, "bold"), fg_color="#27AE60", hover_color="#1E8449", height=40).pack(side="left", fill="x", expand=True, padx=(0, 10))
+        ctk.CTkButton(btn_frame, text="✕ ยกเลิก", command=dialog.destroy, 
+                     font=("Kanit", 12), fg_color="#E74C3C", hover_color="#C0392B", height=40).pack(side="left", fill="x", expand=True)
+
     def update_cart_ui(self):
         for i in self.cart_tree.get_children(): self.cart_tree.delete(i)
         total_amount = 0
@@ -1080,7 +1250,8 @@ objShell.MinimizeAll()
         Index 10: DiscountAmount (column 11)
         Index 11: PaymentMethod (column 12)
         Index 12: ReceivedCoupon (column 13) ← ข้ามนี้ (โค้ตที่ได้รับเป็นส่วนลด)
-        Index 13: Cancel (column 14)
+        Index 13: VAT (column 14)
+        Index 14: Cancel (column 15)
         
         Note: Column 13 (ReceivedCoupon) = โค้ตที่ลูกค้าได้รับมา ไม่ใช่โค้ตที่ใช้ไปแล้ว
         """
@@ -1297,14 +1468,117 @@ objShell.MinimizeAll()
                 except:
                     discount_amount = 0.0
         
-        # ตรวจสอบว่าลูกค้าได้รับโค้ตใหม่หรือไม่ (ซื้อครบ 200 บาท)
+        # ตรวจสอบว่าลูกค้าได้รับโค้ตใหม่หรือไม่ (ซื้อครบ 500 บาท)
         final_amount = total_amount - discount_amount
         if final_amount >= 500:
             received_coupon = f"DISC10-{datetime.now().strftime('%M%S')}"
         
-        self.btn_checkout.configure(state="disabled", text="กำลังบันทึก...")
-        threading.Thread(target=self.run_checkout_thread, 
-                         args=(timestamp, total_amount, used_coupon, discount_amount, payment_method, received_coupon), daemon=True).start()
+        # แสดงหน้าต่างยืนยันการรับเงินก่อนบันทึก
+        if self.show_confirm_payment_dialog(total_amount, discount_amount, final_amount, payment_method):
+            self.btn_checkout.configure(state="disabled", text="กำลังบันทึก...")
+            threading.Thread(target=self.run_checkout_thread, 
+                             args=(timestamp, total_amount, used_coupon, discount_amount, payment_method, received_coupon), daemon=True).start()
+        else:
+            # ยกเลิก = ไม่ทำอะไร
+            pass
+
+    def show_confirm_payment_dialog(self, total_amount, discount_amount, final_amount, payment_method):
+        """แสดงหน้าต่างยืนยันการรับเงินก่อนบันทึก"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("ยืนยันการรับเงิน")
+        dialog.geometry("500x550")
+        dialog.resizable(False, False)
+        dialog.attributes('-topmost', True)
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (550 // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        dialog.grab_set()
+        
+        # ========== UI ==========
+        # Header
+        header = ctk.CTkFrame(dialog, fg_color="#2CC985", corner_radius=0)
+        header.pack(fill="x", padx=0, pady=0)
+        
+        ctk.CTkLabel(header, text="💰 ยืนยันการรับเงิน", 
+                     font=("Kanit", 22, "bold"), text_color="white").pack(pady=20)
+        
+        # Scrollable content frame
+        main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # รายละเอียดเงิน
+        detail_frame = ctk.CTkFrame(main_frame, fg_color="gray20", corner_radius=10)
+        detail_frame.pack(fill="x", pady=(0, 15))
+        
+        # ยอดรวมสินค้า
+        ctk.CTkLabel(detail_frame, text="ยอดรวมสินค้า:", 
+                     font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(15, 3))
+        ctk.CTkLabel(detail_frame, text=f"฿ {total_amount:,.2f}", 
+                     font=("Kanit", 18, "bold"), text_color="white").pack(anchor="w", padx=15, pady=(0, 8))
+        
+        # ส่วนลด (ถ้ามี)
+        if discount_amount > 0:
+            ctk.CTkLabel(detail_frame, text="ส่วนลด:", 
+                         font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(5, 3))
+            ctk.CTkLabel(detail_frame, text=f"- ฿ {discount_amount:,.2f}", 
+                         font=("Kanit", 18, "bold"), text_color="#E74C3C").pack(anchor="w", padx=15, pady=(0, 8))
+        
+        # เส้นคั่น
+        ctk.CTkLabel(detail_frame, text="─" * 45, 
+                     text_color="gray50").pack(anchor="w", padx=15, pady=8)
+        
+        # ยอดชำระ (ใหญ่โต)
+        ctk.CTkLabel(detail_frame, text="ยอดชำระเงิน:", 
+                     font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(5, 3))
+        ctk.CTkLabel(detail_frame, text=f"฿ {final_amount:,.2f}", 
+                     font=("Kanit", 24, "bold"), text_color="#2ECC71").pack(anchor="w", padx=15, pady=(0, 15))
+        
+        # วิธีชำระเงิน
+        method_frame = ctk.CTkFrame(main_frame, fg_color="gray20", corner_radius=10)
+        method_frame.pack(fill="x", pady=(0, 20))
+        
+        ctk.CTkLabel(method_frame, text="วิธีชำระเงิน:", 
+                     font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(15, 5))
+        payment_emoji = "💵" if payment_method == "CASH" else "📱" if payment_method == "PromptPay" else "💳"
+        ctk.CTkLabel(method_frame, text=f"{payment_emoji} {payment_method}", 
+                     font=("Kanit", 16, "bold"), text_color="white").pack(anchor="w", padx=15, pady=(0, 15))
+        
+        # Buttons
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(fill="x", pady=(10, 0))
+        
+        result = {"confirmed": False}
+        
+        def confirm():
+            result["confirmed"] = True
+            dialog.destroy()
+        
+        def cancel():
+            result["confirmed"] = False
+            dialog.destroy()
+        
+        ctk.CTkButton(button_frame, text="✅ ยืนยันและรับเงิน", 
+                      command=confirm,
+                      font=("Kanit", 14, "bold"),
+                      height=50,
+                      fg_color="#27AE60",
+                      hover_color="#1E8449").pack(side="left", fill="both", expand=True, padx=(0, 8))
+        
+        ctk.CTkButton(button_frame, text="❌ ยกเลิก", 
+                      command=cancel,
+                      font=("Kanit", 14, "bold"),
+                      height=50,
+                      fg_color="#E74C3C",
+                      hover_color="#C0392B").pack(side="right", fill="both", expand=True, padx=(8, 0))
+        
+        # Wait for dialog
+        self.wait_window(dialog)
+        
+        return result["confirmed"]
 
     def run_checkout_thread(self, timestamp, total_amount, used_coupon, discount_amount, payment_method, received_coupon):
         if not self.app_running: return 
@@ -1321,12 +1595,23 @@ objShell.MinimizeAll()
                 if hasattr(self, 'current_customer') and self.current_customer:
                     customer_name = self.current_customer.get('FullName', '')
             
+            # ดึงข้อมูล VAT
+            vat_enabled = False
+            vat_amount = 0
+            if hasattr(self, 'app_settings'):
+                vat_enabled = self.app_settings.get('vat_enabled', False)
+                if vat_enabled:
+                    vat_rate = self.app_settings.get('vat_rate', 7)
+                    # คำนวณ VAT จากยอดรวมสุดท้าย (หลังลดแล้ว)
+                    final_total = total_amount - discount_amount
+                    vat_amount = final_total * (vat_rate / 100)
+            
             for item in self.cart_items:
-                # โครงสร้าง: ReceiptID, Date, CustomerPhone, CustomerName, Barcode, Name, Qty, UnitPrice, Total, UsedCoupon, DiscountAmount, PaymentMethod, ReceivedCoupon, Cancel
+                # โครงสร้าง: ReceiptID, Date, CustomerPhone, CustomerName, Barcode, Name, Qty, UnitPrice, Total, UsedCoupon, DiscountAmount, PaymentMethod, ReceivedCoupon, VAT, Cancel
                 row = [receipt_id, timestamp, customer_phone, customer_name, 
                        item['barcode'], item['name'], 
                        item['qty'], item['price'], item['total'], used_coupon, discount_amount, 
-                       payment_method, received_coupon, "No"]  # "No" สำหรับ Cancel column
+                       payment_method, received_coupon, f"{vat_amount:.2f}", "No"]  # VAT amount + "No" สำหรับ Cancel column
                 sales_rows.append(row)
                 
                 # เก็บข้อมูลสำหรับ PDF ใบเสร็จ
@@ -1338,6 +1623,9 @@ objShell.MinimizeAll()
                 })
             
             self.sheet_sales.append_rows(sales_rows)
+            
+            # บันทึกการตัดสต็อก
+            cut_stock_rows = []
             for item in self.cart_items:
                 # ไม่ลดสต็อกสำหรับรายการแบบ manual (barcode เริ่มต้นด้วย Sevice-)
                 if item['barcode'].startswith('Sevice-'):
@@ -1346,37 +1634,83 @@ objShell.MinimizeAll()
                 current_qty = int(current_qty_cell) if current_qty_cell else 0
                 new_qty = max(0, current_qty - item['qty'])
                 self.sheet_products.update_cell(int(item['row_idx']), 8, new_qty)
+                
+                # บันทึกลง Cut_Stock sheet
+                cut_stock_rows.append([receipt_id, timestamp, item['barcode'], item['name'], item['qty'], current_qty, new_qty])
             
-            # สร้างและปริ้นใบเสร็จ
-            self.process_receipt_after_checkout(
-                receipt_id, timestamp, items_for_receipt, 
-                total_amount, discount_amount, total_amount - discount_amount,
-                payment_method, used_coupon, received_coupon
-            )
+            # อัปเดต Cut_Stock sheet
+            if cut_stock_rows and hasattr(self, 'sheet_cut_stock') and self.sheet_cut_stock:
+                try:
+                    self.sheet_cut_stock.append_rows(cut_stock_rows)
+                except Exception as e:
+                    print(f"⚠ ไม่สามารถบันทึกการตัดสต็อก: {e}")
+            
+            # เก็บข้อมูลสำหรับใบเสร็จไว้ส่งไปยัง finish_checkout
+            final_amount = total_amount - discount_amount
+            receipt_data = {
+                'receipt_id': receipt_id,
+                'timestamp': timestamp,
+                'items': items_for_receipt,
+                'total_bill': total_amount,
+                'discount_amount': discount_amount,
+                'final_amount': final_amount,
+                'payment_method': payment_method,
+                'used_coupon': used_coupon,
+                'received_coupon': received_coupon
+            }
             
             if self.app_running and self.winfo_exists():
-                self.after(0, lambda: self.finish_checkout(received_coupon))
+                self.after(0, lambda: self.finish_checkout(received_coupon, payment_method, final_amount, receipt_data))
         except Exception as e:
             if self.app_running and self.winfo_exists():
                 self.after(0, lambda: messagebox.showerror("Error", f"เกิดข้อผิดพลาด: {e}"))
                 self.after(0, lambda: self.btn_checkout.configure(state="normal", text="💰 ชำระเงิน / ตัดสต็อก"))
 
-    def finish_checkout(self, received_coupon):
+    def finish_checkout(self, received_coupon, payment_method="CASH", final_amount=0, receipt_data=None):
+        """จบการชำระเงิน - สร้างใบเสร็จหลังยืนยันจากลูกค้า"""
         if not self.app_running: return
         self.cart_items = []
         self.discount_code_entry.delete(0, "end")
-        self.payment_method.set("เงินสด")
+        self.payment_method.set("PromptPay")
         self.update_cart_ui()
         self.btn_checkout.configure(state="normal", text="💰 ชำระเงิน / ตัดสต็อก")
         self.play_sound("success")
         self.load_inventory_data()
-        if received_coupon: self.show_coupon_qr(received_coupon)
+        
+        # ตัวแปรเพื่อเก็บผลลัพธ์การยืนยัน
+        confirmed = False
+        
+        # แสดง dialog ยืนยันตามประเภทการจ่าย
+        if payment_method == "PromptPay" and final_amount > 0:
+            # สำหรับ PromptPay: แสดง QR Code dialog
+            confirmed = self.show_promptpay_dialog(final_amount)
+        else:
+            # สำหรับการจ่ายแบบอื่น (เงินสด, QR Code, Credit Card): แสดง dialog ยืนยัน
+            confirmed = self.show_confirm_receipt_dialog(final_amount, payment_method)
+        
+        # ถ้าลูกค้ายืนยัน ให้สร้างใบเสร็จ
+        if confirmed and receipt_data:
+            self.process_receipt_after_checkout(
+                receipt_data['receipt_id'],
+                receipt_data['timestamp'],
+                receipt_data['items'],
+                receipt_data['total_bill'],
+                receipt_data['discount_amount'],
+                receipt_data['final_amount'],
+                receipt_data['payment_method'],
+                receipt_data['used_coupon'],
+                receipt_data['received_coupon']
+            )
+        
+        # แสดงคูปองที่ได้รับ
+        if received_coupon:
+            self.show_coupon_qr(received_coupon)
 
     def show_coupon_qr(self, code):
         if not self.app_running: return
         qr_window = ctk.CTkToplevel(self)
         qr_window.title("🎉 คุณได้รับคูปองส่วนลด!")
-        qr_window.geometry("400x450")
+        qr_window.geometry("400x520")
         qr_window.attributes("-topmost", True)
         self.center_window(qr_window)
         ctk.CTkLabel(qr_window, text="ซื้อครบ 200 บาท\nรับคูปองส่วนลด 10% ครั้งถัดไป", 
@@ -1391,6 +1725,164 @@ objShell.MinimizeAll()
         lbl_img.pack(pady=10)
         ctk.CTkLabel(qr_window, text=f"CODE: {code}", font=("Kanit", 20, "bold")).pack(pady=10)
         ctk.CTkButton(qr_window, text="✓ ปิด", command=qr_window.destroy, border_width=2, border_color="#2CC985").pack(pady=10)
+
+    def show_promptpay_dialog(self, amount):
+        """แสดง dialog QR Code สำหรับชำระเงิน"""
+        # ตรวจสอบ PromptPay ID จาก app_settings
+        if not hasattr(self, 'app_settings'):
+            messagebox.showwarning("ยังไม่ได้ตั้งค่า", "กรุณาตั้งค่า PromptPay ID ในเมนู Settings ก่อน")
+            return False
+        
+        promptpay_id = self.app_settings.get('promptpay_id', '')
+        if not promptpay_id:
+            messagebox.showwarning("ยังไม่ได้ตั้งค่า", "กรุณาตั้งค่า PromptPay ID ในเมนู Settings ก่อน")
+            return False
+        
+        # Create dialog
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("สแกนจ่ายด้วย PromptPay")
+        dialog.geometry("400x750")
+        dialog.resizable(True, True)
+        dialog.attributes('-topmost', True)
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (400 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (550 // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        # UI
+        ctk.CTkLabel(dialog, text="💰 สแกนจ่ายเงิน", font=("Kanit", 24, "bold")).pack(pady=(20, 10))
+        ctk.CTkLabel(dialog, text=f"ยอดชำระ: {amount:,.2f} บาท", font=("Kanit", 18, "bold"), text_color="#2ECC71").pack(pady=5)
+        
+        # Generate QR
+        try:
+            import promptpay_utils
+            img = promptpay_utils.generate_promptpay_qr(promptpay_id, amount)
+            
+            # Convert to CTkImage
+            img = img.resize((250, 250), Image.Resampling.LANCZOS)
+            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(250, 250))
+            
+            lbl_img = ctk.CTkLabel(dialog, image=ctk_img, text="")
+            lbl_img.image = ctk_img  # Keep reference
+            lbl_img.pack(pady=20)
+            
+            ctk.CTkLabel(dialog, text=f"PromptPay ID: {promptpay_id}", font=("Kanit", 14), text_color="gray").pack(pady=5)
+            
+        except ImportError:
+            ctk.CTkLabel(dialog, text="ไม่พบ module promptpay_utils", text_color="red").pack(pady=20)
+        except Exception as e:
+            ctk.CTkLabel(dialog, text=f"Error generating QR: {e}", text_color="red").pack(pady=20)
+            print(f"[ERROR] PromptPay QR generation failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=20)
+        
+        self.promptpay_confirmed = False
+        
+        def confirm():
+            self.promptpay_confirmed = True
+            dialog.destroy()
+            
+        def cancel():
+            self.promptpay_confirmed = False
+            dialog.destroy()
+            
+        ctk.CTkButton(btn_frame, text="✅ ลูกค้าชำระเงินแล้ว", command=confirm, 
+                      font=("Kanit", 16, "bold"), height=50, fg_color="#27AE60", hover_color="#1E8449").pack(fill="x", pady=5)
+                      
+        ctk.CTkButton(btn_frame, text="ยกเลิก", command=cancel, 
+                      font=("Kanit", 16), height=40, fg_color="#E74C3C", hover_color="#C0392B").pack(fill="x", pady=5)
+        
+        # Wait for dialog
+        dialog.grab_set()
+        self.wait_window(dialog)
+        
+        return self.promptpay_confirmed
+
+    def show_confirm_receipt_dialog(self, amount, payment_method):
+        """แสดง dialog ยืนยันการรับเงินสำหรับการจ่ายแบบอื่น (เงินสด, QR Code, Credit Card)"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("ยืนยันการรับเงิน")
+        dialog.geometry("500x400")
+        dialog.resizable(False, False)
+        dialog.attributes('-topmost', True)
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (400 // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        dialog.grab_set()
+        
+        # ========== UI ==========
+        # Header
+        header = ctk.CTkFrame(dialog, fg_color="#2CC985", corner_radius=0)
+        header.pack(fill="x", padx=0, pady=0)
+        
+        ctk.CTkLabel(header, text="💰 ยืนยันการรับเงิน", 
+                     font=("Kanit", 22, "bold"), text_color="white").pack(pady=20)
+        
+        # Content frame
+        main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # ยอดชำระ
+        amount_frame = ctk.CTkFrame(main_frame, fg_color="gray20", corner_radius=10)
+        amount_frame.pack(fill="x", pady=(0, 20))
+        
+        ctk.CTkLabel(amount_frame, text="ยอดชำระเงิน:", 
+                     font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(15, 5))
+        ctk.CTkLabel(amount_frame, text=f"฿ {amount:,.2f}", 
+                     font=("Kanit", 28, "bold"), text_color="#2ECC71").pack(anchor="w", padx=15, pady=(0, 15))
+        
+        # วิธีชำระเงิน
+        method_frame = ctk.CTkFrame(main_frame, fg_color="gray20", corner_radius=10)
+        method_frame.pack(fill="x", pady=(0, 20))
+        
+        ctk.CTkLabel(method_frame, text="วิธีชำระเงิน:", 
+                     font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(15, 5))
+        payment_emoji = "💵" if payment_method == "เงินสด" else "📱" if payment_method == "QR Code" else "💳"
+        ctk.CTkLabel(method_frame, text=f"{payment_emoji} {payment_method}", 
+                     font=("Kanit", 16, "bold"), text_color="white").pack(anchor="w", padx=15, pady=(0, 15))
+        
+        # Buttons
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(fill="x", pady=(10, 0))
+        
+        result = {"confirmed": False}
+        
+        def confirm():
+            result["confirmed"] = True
+            dialog.destroy()
+        
+        def cancel():
+            result["confirmed"] = False
+            dialog.destroy()
+        
+        ctk.CTkButton(button_frame, text="✅ ยืนยันและสร้างใบเสร็จ", 
+                      command=confirm,
+                      font=("Kanit", 14, "bold"),
+                      height=50,
+                      fg_color="#27AE60",
+                      hover_color="#1E8449").pack(side="left", fill="both", expand=True, padx=(0, 8))
+        
+        ctk.CTkButton(button_frame, text="❌ ยกเลิก", 
+                      command=cancel,
+                      font=("Kanit", 14, "bold"),
+                      height=50,
+                      fg_color="#E74C3C",
+                      hover_color="#C0392B").pack(side="right", fill="both", expand=True, padx=(8, 0))
+        
+        # Wait for dialog
+        self.wait_window(dialog)
+        
+        return result["confirmed"]
 
     # =========================================
     # TAB 2: INVENTORY Logic
@@ -1415,6 +1907,11 @@ objShell.MinimizeAll()
         
         ctk.CTkLabel(frame_top, text="* ดับเบิ้ลคลิกที่จำนวนเพื่อแก้ไขสต็อก", text_color="gray").pack(side="left", padx=10)
 
+        # ตั้งค่า ttk.Style ให้ชัดเจน เพื่อแก้ไข font scaling issue
+        style = ttk.Style()
+        style.configure("Treeview", font=("Kanit", 10), rowheight=25)
+        style.configure("Treeview.Heading", font=("Kanit", 11, "bold"))
+        
         columns = ("ID", "Barcode", "Name", "Brand", "Car Model", "Detail", "Cost", "Stock", "Price", "ImageID")
         self.tree = ttk.Treeview(frame_list, columns=columns, show="headings")
         headers = ["ID", "Barcode", "Name", "Brand", "Car Model", "Detail", "Cost", "Stock", "Price", "ImageID"]
@@ -1531,6 +2028,10 @@ objShell.MinimizeAll()
         self.load_inventory_data()
 
     def on_tree_double_click(self, event):
+        # ตรวจสอบว่า POS tab สร้างเรียบร้อยแล้ว
+        if not hasattr(self, 'tree'):
+            return
+        
         region = self.tree.identify_region(event.x, event.y)
         if region != "cell": return
         column = self.tree.identify_column(event.x)
@@ -1564,6 +2065,9 @@ objShell.MinimizeAll()
             records = self.sheet_products.get_all_values()
             if len(records) > 1:
                 self.all_inventory_data = []
+                # ตรวจสอบว่า POS tab สร้างเรียบร้อยแล้ว
+                if not hasattr(self, 'tree'):
+                    return
                 for i in self.tree.get_children(): self.tree.delete(i)
                 for idx, row in enumerate(records[1:], start=2):
                     safe_row = (row + [""] * 10)[:10]  # 10 columns: ID, Barcode, Name, Brand, Car Model, Detail, Cost, Stock, Price, ImageID
@@ -1574,6 +2078,10 @@ objShell.MinimizeAll()
             print(f"Load Error: {e}")
 
     def on_product_select(self, event):
+        # ตรวจสอบว่า POS tab สร้างเรียบร้อยแล้ว
+        if not hasattr(self, 'tree'):
+            return
+        
         selected = self.tree.selection()
         if not selected: return
         vals = self.tree.item(selected)['values']
@@ -2097,6 +2605,11 @@ objShell.MinimizeAll()
         ctk.CTkButton(left_frame, text="🔄 โหลดประวัติ", command=self.load_history_data, 
                      border_width=2, border_color="#3498DB").pack(fill="x", pady=5)
         
+        # ตั้งค่า ttk.Style สำหรับ History tab
+        style = ttk.Style()
+        style.configure("HistoryTreeview", font=("Kanit", 10), rowheight=25)
+        style.configure("HistoryTreeview.Heading", font=("Kanit", 11, "bold"))
+        
         self.tree_receipts = ttk.Treeview(left_frame, columns=("ID", "Date", "Payment", "Total"), show="headings")
         self.tree_receipts.heading("ID", text="เลขที่ใบเสร็จ"); self.tree_receipts.column("ID", width=100)
         self.tree_receipts.heading("Date", text="วันที่"); self.tree_receipts.column("Date", width=100)
@@ -2110,6 +2623,11 @@ objShell.MinimizeAll()
         right_frame.pack(side="right", fill="both", expand=True, padx=5, pady=5)
         
         ctk.CTkLabel(right_frame, text="รายการสินค้าในบิล", font=("Kanit", 20, "bold")).pack(pady=10)
+        
+        # ตั้งค่า ttk.Style สำหรับ รายการสินค้า
+        style = ttk.Style()
+        style.configure("ItemsTreeview", font=("Kanit", 10), rowheight=25)
+        style.configure("ItemsTreeview.Heading", font=("Kanit", 11, "bold"))
         
         # เพิ่มช่อง Barcode
         self.tree_rec_items = ttk.Treeview(right_frame, columns=("Barcode", "Name", "Qty", "Price", "Total"), show="headings")
@@ -2228,10 +2746,10 @@ objShell.MinimizeAll()
                             coupon_received = row[12] if len(row) > 12 and row[12] else '-'
                             self.sales_history_data[rec_id]['coupon_received'] = coupon_received
                             
-                            # ดึงค่า is_cancelled (column 14 = index 13) - ตรวจสอบว่า "Yes" หรือไม่
+                            # ดึงค่า is_cancelled (column 15 = index 14) - ตรวจสอบว่า "Yes" หรือไม่
                             is_cancelled = False
-                            if len(row) > 13 and row[13]:
-                                cancel_value = row[13].strip().lower()
+                            if len(row) > 14 and row[14]:
+                                cancel_value = row[14].strip().lower()
                                 is_cancelled = cancel_value == 'yes'
                             self.sales_history_data[rec_id]['is_cancelled'] = is_cancelled
                             
@@ -2261,6 +2779,10 @@ objShell.MinimizeAll()
             print(f"ข้อผิดพลาดในการโหลดประวัติ: {e}")
 
     def update_history_ui(self):
+        # ตรวจสอบว่า History tab สร้างเรียบร้อยแล้ว (lazy loading)
+        if not hasattr(self, 'tree_receipts'):
+            return
+        
         for i in self.tree_receipts.get_children(): self.tree_receipts.delete(i)
         
         sorted_ids = sorted(self.sales_history_data.keys(), reverse=True)
@@ -2283,6 +2805,10 @@ objShell.MinimizeAll()
         self.tree_receipts.tag_configure('cancelled', foreground='#E74C3C')
 
     def on_receipt_select(self, event):
+        # ตรวจสอบว่า History tab สร้างเรียบร้อยแล้ว
+        if not hasattr(self, 'tree_receipts'):
+            return
+        
         selected = self.tree_receipts.selection()
         if not selected: return
         
@@ -2290,6 +2816,9 @@ objShell.MinimizeAll()
         # ลบ " (ยกเลิก)" จาก ID ถ้ามี (สำหรับรับแสดงข้อมูลที่ถูกต้อง)
         r_id = r_id.replace(" (ยกเลิก)", "")
         
+        # ตรวจสอบว่า History tab สร้างเรียบร้อยแล้ว
+        if not hasattr(self, 'tree_rec_items'):
+            return
         for i in self.tree_rec_items.get_children(): self.tree_rec_items.delete(i)
         
         if r_id in self.sales_history_data:
@@ -2334,6 +2863,10 @@ objShell.MinimizeAll()
 
     def cancel_receipt(self):
         """ยกเลิกใบเสร็จและอัปเดต Google Sheet"""
+        # ตรวจสอบว่า History tab สร้างเรียบร้อยแล้ว
+        if not hasattr(self, 'tree_receipts'):
+            return
+        
         # ตรวจสอบว่ามีการเลือกใบเสร็จในตาราง
         selected = self.tree_receipts.selection()
         if not selected:
@@ -2385,7 +2918,7 @@ objShell.MinimizeAll()
                 total_bill = data.get('total_bill', 0.0)
                 discount_amount = data.get('discount_amount', 0.0)
                 final_total = data.get('final_total', 0.0)
-                payment_method = data.get('payment_method', 'เงินสด')
+                payment_method = data.get('payment_method', 'CASH')
                 used_coupon = data.get('used_coupon', '')
                 received_coupon = data.get('received_coupon', '')
                 
@@ -2414,15 +2947,15 @@ objShell.MinimizeAll()
         try:
             records = self.sheet_sales.get_all_values()
             
-            # หาแถวที่มี ReceiptID เท่ากับ r_id และอัปเดต column 14 (Cancel) เป็น "Yes"
+            # หาแถวที่มี ReceiptID เท่ากับ r_id และอัปเดต column 15 (Cancel) เป็น "Yes"
             # Column ใหม่: 1=ReceiptID, 2=Date, 3=CustomerPhone, 4=CustomerName, 5=Barcode, 6=Name, 
             #             7=Qty, 8=UnitPrice, 9=Total, 10=UsedCoupon, 11=DiscountAmount, 12=PaymentMethod,
-            #             13=ReceivedCoupon, 14=Cancel
+            #             13=ReceivedCoupon, 14=VAT, 15=Cancel
             updated = False
             for row_idx, row in enumerate(records, start=1):  # row_idx เริ่มจาก 1 (header อยู่ที่ 1)
                 if len(row) > 0 and row[0] == r_id:
-                    # อัปเดต column 14 (N) = Cancel column
-                    self.sheet_sales.update_cell(row_idx, 14, "Yes")  # column 14 = Cancel
+                    # อัปเดต column 15 = Cancel column
+                    self.sheet_sales.update_cell(row_idx, 15, "Yes")  # column 15 = Cancel
                     updated = True
             
             if updated:
@@ -3514,8 +4047,8 @@ objShell.MinimizeAll()
                         if rec_date < date_from or rec_date > date_to:
                             continue
                         
-                        # ตรวจสอบว่ายกเลิกหรือไม่ (Index 13 = Cancel)
-                        is_cancelled = row[13].strip().lower() == 'yes' if len(row) > 13 else False
+                        # ตรวจสอบว่ายกเลิกหรือไม่ (Index 14 = Cancel)
+                        is_cancelled = row[14].strip().lower() == 'yes' if len(row) > 14 else False
                         if is_cancelled:
                             cancelled_count += 1
                             continue
@@ -4371,7 +4904,147 @@ objShell.MinimizeAll()
                 messagebox.showerror("เกิดข้อผิดพลาด", str(e))
 
     # =========================================
-    # TAB 7: AI & Social Media
+    # TAB 7: Settings (ตั้งค่า)
+    # =========================================
+    def setup_settings_tab(self):
+        """Setup tab สำหรับการตั้งค่าทั่วไป"""
+        main_scroll = ctk.CTkScrollableFrame(self.tab_settings, fg_color="transparent")
+        main_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # หัวข้อ
+        ctk.CTkLabel(main_scroll, text="⚙️ ตั้งค่า (Settings)", font=("Kanit", 24, "bold")).pack(pady=15, anchor="w", padx=10)
+        
+        # ==================== ส่วนที่ 1: ข้อมูลร้านค้า ====================
+        shop_frame = ctk.CTkFrame(main_scroll, fg_color="gray20", corner_radius=8)
+        shop_frame.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(shop_frame, text="📍 ข้อมูลร้านค้า", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # ชื่อร้าน
+        ctk.CTkLabel(shop_frame, text="ชื่อร้าน:", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(5, 0))
+        self.settings_shop_name = ctk.CTkEntry(shop_frame, font=("Kanit", 12), height=35)
+        self.settings_shop_name.pack(fill="x", padx=15, pady=5)
+        
+        # ที่อยู่
+        ctk.CTkLabel(shop_frame, text="ที่อยู่:", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(5, 0))
+        self.settings_shop_address = ctk.CTkEntry(shop_frame, font=("Kanit", 12), height=35)
+        self.settings_shop_address.pack(fill="x", padx=15, pady=5)
+        
+        # เบอร์โทรศัพท์
+        ctk.CTkLabel(shop_frame, text="เบอร์โทรศัพท์:", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(5, 0))
+        self.settings_shop_phone = ctk.CTkEntry(shop_frame, font=("Kanit", 12), height=35)
+        self.settings_shop_phone.pack(fill="x", padx=15, pady=5)
+        
+        # ข้อความขอบคุณ
+        ctk.CTkLabel(shop_frame, text="ข้อความขอบคุณ (ท้ายบิล):", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(5, 0))
+        self.settings_thank_you_msg = ctk.CTkTextbox(shop_frame, font=("Kanit", 12), height=60)
+        self.settings_thank_you_msg.pack(fill="x", padx=15, pady=5)
+        
+        # ==================== ส่วนที่ 2: ภาษี/VAT ====================
+        vat_frame = ctk.CTkFrame(main_scroll, fg_color="gray20", corner_radius=8)
+        vat_frame.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(vat_frame, text="💰 ภาษี/VAT", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # เปิด/ปิด VAT
+        vat_status_frame = ctk.CTkFrame(vat_frame, fg_color="transparent")
+        vat_status_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(vat_status_frame, text="เปิด/ปิด VAT:", font=("Kanit", 12)).pack(side="left", padx=(0, 15))
+        self.settings_vat_enabled = ctk.CTkSwitch(vat_status_frame, text="เปิด VAT", font=("Kanit", 12), onvalue=True, offvalue=False)
+        self.settings_vat_enabled.pack(side="left")
+        
+        # อัตรา VAT
+        vat_rate_frame = ctk.CTkFrame(vat_frame, fg_color="transparent")
+        vat_rate_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(vat_rate_frame, text="อัตรา VAT (%):", font=("Kanit", 12)).pack(side="left", padx=(0, 10))
+        self.settings_vat_rate = ctk.CTkEntry(vat_rate_frame, font=("Kanit", 12), height=30, width=80)
+        self.settings_vat_rate.pack(side="left", padx=5)
+        self.settings_vat_rate.insert(0, "7")
+        
+        # เลขประจำตัวผู้เสียภาษี
+        ctk.CTkLabel(vat_frame, text="เลขประจำตัวผู้เสียภาษี:", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(5, 0))
+        self.settings_tax_id = ctk.CTkEntry(vat_frame, font=("Kanit", 12), height=35)
+        self.settings_tax_id.pack(fill="x", padx=15, pady=5)
+        
+        # ==================== ส่วนที่ 3: PromptPay ====================
+        promptpay_frame = ctk.CTkFrame(main_scroll, fg_color="gray20", corner_radius=8)
+        promptpay_frame.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(promptpay_frame, text="📱 PromptPay (พร้อมเพย์)", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # เลือกประเภท PromptPay
+        promptpay_type_frame = ctk.CTkFrame(promptpay_frame, fg_color="transparent")
+        promptpay_type_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(promptpay_type_frame, text="ประเภท ID:", font=("Kanit", 12)).pack(side="left", padx=(0, 10))
+        self.settings_promptpay_type = ctk.CTkComboBox(
+            promptpay_type_frame, 
+            values=["เบอร์โทรศัพท์", "เลขประจำตัวประชาชน"],
+            font=("Kanit", 12),
+            width=150
+        )
+        self.settings_promptpay_type.set("เบอร์โทรศัพท์")
+        self.settings_promptpay_type.pack(side="left")
+        
+        # PromptPay ID (เบอร์โทร หรือ เลขบัตรประชาชน)
+        ctk.CTkLabel(promptpay_frame, text="PromptPay ID (เบอร์โทรหรือเลขบัตร):", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(5, 0))
+        self.settings_promptpay_id = ctk.CTkEntry(promptpay_frame, font=("Kanit", 12), height=35)
+        self.settings_promptpay_id.pack(fill="x", padx=15, pady=5)
+        
+        # ==================== ส่วนที่ 4: เครื่องพิมพ์ ====================
+        printer_frame = ctk.CTkFrame(main_scroll, fg_color="gray20", corner_radius=8)
+        printer_frame.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(printer_frame, text="🖨️ เครื่องพิมพ์", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # ชื่อเครื่องพิมพ์
+        ctk.CTkLabel(printer_frame, text="เลือกเครื่องพิมพ์:", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(5, 0))
+        
+        printer_list_frame = ctk.CTkFrame(printer_frame, fg_color="transparent")
+        printer_list_frame.pack(fill="x", padx=15, pady=5)
+        
+        self.settings_printer_combo = ctk.CTkComboBox(printer_list_frame, font=("Kanit", 12), width=300)
+        self.settings_printer_combo.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        btn_refresh_printers = ctk.CTkButton(printer_list_frame, text="🔄 รีเฟรช", command=self.refresh_printers_list, width=80, height=32)
+        btn_refresh_printers.pack(side="left")
+        
+        # ขนาดกระดาษ
+        paper_size_frame = ctk.CTkFrame(printer_frame, fg_color="transparent")
+        paper_size_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(paper_size_frame, text="ขนาดกระดาษ:", font=("Kanit", 12)).pack(side="left", padx=(0, 10))
+        self.settings_paper_size = ctk.CTkComboBox(
+            paper_size_frame, 
+            values=["58mm", "80mm"],
+            font=("Kanit", 12),
+            width=100
+        )
+        self.settings_paper_size.set("58mm")
+        self.settings_paper_size.pack(side="left")
+        
+        # ==================== ปุ่มบันทึก ====================
+        button_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        button_frame.pack(fill="x", padx=10, pady=20)
+        
+        btn_save = ctk.CTkButton(button_frame, text="✓ บันทึกการตั้งค่า", command=self.save_settings, 
+                                font=("Kanit", 14, "bold"), height=40, fg_color="#2CC985", hover_color="#1B8A4C")
+        btn_save.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        btn_cancel = ctk.CTkButton(button_frame, text="✕ ยกเลิก", command=self.load_settings, 
+                                  font=("Kanit", 14, "bold"), height=40, fg_color="#E74C3C", hover_color="#C0392B")
+        btn_cancel.pack(side="left", fill="x", expand=True)
+        
+        # โหลดข้อมูลจาก settings
+        self.load_settings()
+        
+        # โหลดรายชื่อเครื่องพิมพ์
+        self.refresh_printers_list()
+
+    # =========================================
+    # TAB 8: AI & Social Media
     # =========================================
     def setup_ai_social_tab(self):
         """Setup tab สำหรับ AI content generation และ Social media posting"""
@@ -5502,7 +6175,117 @@ Barcode: {product_details.get('barcode', '-')}
         except Exception as e:
             messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถเปิดโฟลเดอร์: {str(e)}")
     
+    # =========================================
+    # SETTINGS Functions
+    # =========================================
+    def load_settings(self):
+        """โหลดการตั้งค่าจากไฟล์ settings.json"""
+        try:
+            if os.path.exists('settings.json'):
+                import json
+                with open('settings.json', 'r', encoding='utf-8') as f:
+                    self.app_settings = json.load(f)
+            else:
+                # ค่าเริ่มต้น
+                self.app_settings = {
+                    'shop_name': 'ร้านของฉัน',
+                    'shop_address': 'บ้านเลขที่ 123',
+                    'shop_phone': '02-123-4567',
+                    'thank_you_msg': 'ขอบคุณที่ใช้บริการ',
+                    'vat_enabled': False,
+                    'vat_rate': 7,
+                    'tax_id': '',
+                    'promptpay_type': 'เบอร์โทรศัพท์',
+                    'promptpay_id': '',
+                    'printer_name': self.printer_name,
+                    'paper_size': '58mm'
+                }
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+            self.app_settings = {}
+        
+        # อัปเดต UI
+        if hasattr(self, 'settings_shop_name'):
+            self.settings_shop_name.delete(0, "end")
+            self.settings_shop_name.insert(0, self.app_settings.get('shop_name', ''))
+            
+            self.settings_shop_address.delete(0, "end")
+            self.settings_shop_address.insert(0, self.app_settings.get('shop_address', ''))
+            
+            self.settings_shop_phone.delete(0, "end")
+            self.settings_shop_phone.insert(0, self.app_settings.get('shop_phone', ''))
+            
+            self.settings_thank_you_msg.delete("1.0", "end")
+            self.settings_thank_you_msg.insert("1.0", self.app_settings.get('thank_you_msg', ''))
+            
+            self.settings_vat_enabled.select() if self.app_settings.get('vat_enabled', False) else self.settings_vat_enabled.deselect()
+            
+            self.settings_vat_rate.delete(0, "end")
+            self.settings_vat_rate.insert(0, str(self.app_settings.get('vat_rate', 7)))
+            
+            self.settings_tax_id.delete(0, "end")
+            self.settings_tax_id.insert(0, self.app_settings.get('tax_id', ''))
+            
+            self.settings_promptpay_type.set(self.app_settings.get('promptpay_type', 'เบอร์โทรศัพท์'))
+            
+            self.settings_promptpay_id.delete(0, "end")
+            self.settings_promptpay_id.insert(0, self.app_settings.get('promptpay_id', ''))
+            
+            self.settings_paper_size.set(self.app_settings.get('paper_size', '58mm'))
+    
+    def save_settings(self):
+        """บันทึกการตั้งค่าลงไฟล์ settings.json"""
+        try:
+            import json
+            
+            self.app_settings = {
+                'shop_name': self.settings_shop_name.get(),
+                'shop_address': self.settings_shop_address.get(),
+                'shop_phone': self.settings_shop_phone.get(),
+                'thank_you_msg': self.settings_thank_you_msg.get("1.0", "end").strip(),
+                'vat_enabled': self.settings_vat_enabled.get(),
+                'vat_rate': float(self.settings_vat_rate.get() or 7),
+                'tax_id': self.settings_tax_id.get(),
+                'promptpay_type': self.settings_promptpay_type.get(),
+                'promptpay_id': self.settings_promptpay_id.get(),
+                'printer_name': self.settings_printer_combo.get(),
+                'paper_size': self.settings_paper_size.get()
+            }
+            
+            # บันทึกลงไฟล์
+            with open('settings.json', 'w', encoding='utf-8') as f:
+                json.dump(self.app_settings, f, ensure_ascii=False, indent=2)
+            
+            # อัปเดตตัวแปร instance
+            self.printer_name = self.app_settings.get('printer_name', '')
+            
+            messagebox.showinfo("สำเร็จ", "บันทึกการตั้งค่าเรียบร้อย")
+            
+        except ValueError:
+            messagebox.showerror("ข้อผิดพลาด", "กรุณากรอกอัตรา VAT เป็นตัวเลข")
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถบันทึกการตั้งค่า: {e}")
+    
+    def refresh_printers_list(self):
+        """รีเฟรชรายชื่อเครื่องพิมพ์"""
+        try:
+            import win32print
+            printers = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL)
+            printer_names = [p[2] for p in printers]
+        except:
+            printer_names = ["Default Printer", "Microsoft Print to PDF"]
+        
+        if hasattr(self, 'settings_printer_combo'):
+            self.settings_printer_combo.configure(values=printer_names)
+            # ตั้งค่าเริ่มต้น
+            current_printer = self.app_settings.get('printer_name', '') if hasattr(self, 'app_settings') else self.printer_name
+            if current_printer in printer_names:
+                self.settings_printer_combo.set(current_printer)
+            elif printer_names:
+                self.settings_printer_combo.set(printer_names[0])
+    
     def post_ad_to_facebook(self):
+
         """โพสรูปโฆษณาไป Facebook"""
         if not hasattr(self, 'current_ad_path') or not self.current_ad_path:
             messagebox.showwarning("ขาดข้อมูล", "กรุณาสร้างรูปโฆษณาก่อน")
@@ -6043,9 +6826,10 @@ https://developers.facebook.com/tools/explorer/
                 # ถ้า timestamp เป็นค่าว่าง ใช้เวลาปัจจุบัน (เวลาออกใบเสร็จจริง)
                 date_time = datetime.now()
             
-            pdf.set_font(thai_font, "", 12)
-            pdf.cell(40, 4, f"เลขที่ใบเสร็จ : {receipt_id}", border=0, align="L", new_x=XPos.LEFT, new_y=YPos.TOP)
-            pdf.cell(0, 4, f"เวลา : {date_time.strftime('%d/%m/%Y %H:%M:%S')}", border=0, align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.set_font(thai_font, "", 10)
+            pdf.cell(0, 4, f"เลขที่ : {receipt_id}", border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.cell(0, 4, f"วันที่ : {date_time.strftime('%d/%m/%Y')}", border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.cell(0, 4, f"เวลา : {date_time.strftime('%H:%M:%S')}", border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
             pdf.ln(2)
             
@@ -6082,6 +6866,15 @@ https://developers.facebook.com/tools/explorer/
             if discount_amount > 0:
                 pdf.cell(0, 4, f"ส่วนลด : -{discount_amount:,.2f} บาท", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="R")
             
+            # คำนวณและแสดง VAT (ถ้าเปิด)
+            vat_amount = 0.0
+            if hasattr(self, 'app_settings') and self.app_settings.get('vat_enabled', False):
+                vat_rate = self.app_settings.get('vat_rate', 7)
+                # คำนวณ VAT จากยอดรวมก่อนลด
+                vat_amount = total_bill * (vat_rate / 100)
+                pdf.cell(0, 4, f"ภาษี VAT ({vat_rate}%) : {vat_amount:,.2f} บาท", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="R")
+            
+            # ยอดที่จ่าย (รวม VAT)
             pdf.cell(0, 4, f"ยอดที่จ่าย : {final_total:,.2f} บาท", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="R")
 
             if used_coupon and used_coupon != "-":

@@ -1,0 +1,13 @@
+{
+  "shop_name": "ฉี เซอร์วิส",
+  "shop_address": "178/1 ม.1 ต.พรหมโลก อ.พรหมคีรี จ.นครศรีธรรมราช 80320",
+  "shop_phone": "086-283-6944",
+  "thank_you_msg": "ขอบคุณที่ใช้บริการ",
+  "vat_enabled": true,
+  "vat_rate": 7.0,
+  "tax_id": "1809900615167",
+  "promptpay_type": "เบอร์โทรศัพท์",
+  "promptpay_id": "0875428331",
+  "printer_name": "Microsoft Print to PDF",
+  "paper_size": "80mm"
+}
