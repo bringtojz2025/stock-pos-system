@@ -1,5 +1,5 @@
 import customtkinter as ctk
-from tkinter import messagebox, filedialog, ttk, simpledialog
+from tkinter import font, messagebox, filedialog, ttk, simpledialog
 import gspread
 import os
 import pickle
@@ -173,7 +173,7 @@ ctk.set_default_color_theme("blue")
 class StockManagerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("ระบบ POS & Stock V.11.1 (History with Barcode)")
+        self.title("POS & Stock V.1.0")
         self.geometry("1200x850")
         
         self.app_running = True
@@ -699,7 +699,7 @@ objShell.MinimizeAll()
         self.pos_barcode.bind('<Return>', self.add_item_to_cart)
         
         # ปุ่มสแกน QR/Barcode
-        btn_scan = ctk.CTkButton(left_frame, text="📱 สแกน QR / Barcode", command=self.open_barcode_input_dialog,
+        btn_scan = ctk.CTkButton(left_frame, text="📱 สแกน Barcode เพื่อเช็คราคา", command=self.open_barcode_input_dialog,
                                 font=("Kanit", 14), height=40, fg_color="#3498DB", hover_color="#2980B9")
         btn_scan.pack(pady=10, fill="x", padx=10)
 
@@ -759,7 +759,7 @@ objShell.MinimizeAll()
         payment_frame = ctk.CTkFrame(left_frame, fg_color="gray25")
         payment_frame.pack(fill="x", padx=10, pady=5)
         ctk.CTkLabel(payment_frame, text="ประเภทการจ่าย:", font=("Kanit", 14)).pack(anchor="w", padx=10, pady=5)
-        self.payment_method = ctk.CTkComboBox(payment_frame, values=["PromptPay","Cash","QR Code", "Credit Card"], 
+        self.payment_method = ctk.CTkComboBox(payment_frame, values=["PromptPay","Cash", "Credit Card"], 
                                               font=("Kanit", 12))
         self.payment_method.set("PromptPay")
         self.payment_method.pack(fill="x", padx=10, pady=5)
@@ -1068,40 +1068,36 @@ objShell.MinimizeAll()
                      font=("Kanit", 14), fg_color="#E74C3C", hover_color="#C0392B", height=45).pack(pady=15, padx=10, fill="x")
 
     def open_barcode_input_dialog(self):
-        """เปิด dialog สำหรับ input QR / Barcode + ราคา (สำหรับการสแกนด้วยมือหรือจากอื่นๆ)"""
+        """เปิด dialog สำหรับเช็คราคาสินค้า จากการสแกน Barcode"""
         dialog = ctk.CTkToplevel(self)
-        dialog.title("📱 สแกน QR / Barcode")
-        dialog.geometry("500x420")
+        dialog.title("💰 เช็คราคาสินค้า")
+        dialog.geometry("600x500")
         dialog.resizable(False, False)
         self.after(100, lambda: self.center_window(dialog))
+        dialog.attributes('-topmost', True)  # ทำให้หน้าต่างอยู่หน้าสุด
         
         # หัวข้อ
-        ctk.CTkLabel(dialog, text="📱 สแกน QR Code หรือ Barcode", font=("Kanit", 18, "bold")).pack(pady=20)
+        ctk.CTkLabel(dialog, text="💰 เช็คราคาสินค้า", font=("Kanit", 20, "bold")).pack(pady=20)
         
         # Barcode input
-        ctk.CTkLabel(dialog, text="Barcode / QR Code:", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=20, anchor="w")
-        entry_barcode = ctk.CTkEntry(dialog, placeholder_text="วาง QR / Barcode Scanner ที่นี่", font=("Kanit", 11))
-        entry_barcode.pack(pady=(0, 15), padx=20, fill="x")
+        ctk.CTkLabel(dialog, text="Barcode / QR Code:", font=("Kanit", 13, "bold")).pack(pady=(10, 5), padx=20, anchor="w")
+        entry_barcode = ctk.CTkEntry(dialog, placeholder_text="วาง QR / Barcode Scanner ที่นี่", font=("Kanit", 12))
+        entry_barcode.pack(pady=(0, 20), padx=20, fill="x", ipady=8)
         entry_barcode.focus()
         
-        # ราคา (optional - ถ้าต้องการแทนที่ราคาจาก inventory)
-        ctk.CTkLabel(dialog, text="ราคาสินค้า (ไม่บังคับ - ใช้ราคาจาก Inventory ถ้าว่าง):", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=20, anchor="w")
-        entry_price = ctk.CTkEntry(dialog, placeholder_text="เว้นว่างเพื่อใช้ราคา Inventory", font=("Kanit", 11))
-        entry_price.pack(pady=(0, 15), padx=20, fill="x")
+        # แสดงผลลัพธ์
+        result_frame = ctk.CTkFrame(dialog, fg_color="gray20", corner_radius=10)
+        result_frame.pack(pady=15, padx=20, fill="both", expand=True)
         
-        # ข้อความแนะนำ
-        hint_frame = ctk.CTkFrame(dialog, fg_color="gray20", corner_radius=8)
-        hint_frame.pack(pady=15, padx=20, fill="x")
-        ctk.CTkLabel(hint_frame, text="💡 วิธีใช้:\n1. วาง QR/Barcode Scanner ที่ช่อง Barcode\n2. (ไม่บังคับ) ใส่ราคาในช่องราคาถ้าต้องการแทนที่\n3. กด Enter หรือ ปุ่ม เพิ่มลงตะกร้า", 
-                        font=("Kanit", 11), text_color="gray", justify="left").pack(padx=15, pady=15)
+        result_label = ctk.CTkLabel(result_frame, text="กรุณาสแกนบาร์โค้ด", font=("Kanit", 14), text_color="gray")
+        result_label.pack(pady=30, padx=20, fill="both", expand=True)
         
-        def add_from_dialog():
+        def check_price():
             try:
                 barcode = entry_barcode.get().strip()
-                price_input = entry_price.get().strip()
                 
                 if not barcode:
-                    messagebox.showwarning("แจ้งเตือน", "กรุณากรอก Barcode / QR Code")
+                    result_label.configure(text="กรุณาสแกนบาร์โค้ด", text_color="gray")
                     entry_barcode.focus()
                     return
                 
@@ -1119,67 +1115,48 @@ objShell.MinimizeAll()
                     row_idx, data = found_product
                     name = data[2]
                     
-                    # ใช้ราคาจาก input ถ้ามี ไม่เช่นใช้ราคาจาก inventory
-                    if price_input:
-                        try:
-                            price = float(price_input)
-                        except:
-                            messagebox.showerror("ข้อผิดพลาด", "กรุณาใส่ราคาเป็นตัวเลข")
-                            entry_price.focus()
-                            return
-                    else:
-                        try:
-                            price = float(data[8]) if len(data) > 8 else 0.0
-                        except:
-                            price = 0.0
+                    try:
+                        price = float(data[8]) if len(data) > 8 else 0.0
+                    except:
+                        price = 0.0
                     
                     try:
                         current_stock = int(data[7]) if len(data) > 7 and data[7] else 0
                     except:
                         current_stock = 0
                     
-                    qty_in_cart = sum(item['qty'] for item in self.cart_items if item['barcode'] == barcode)
-                    if qty_in_cart + 1 > current_stock:
-                        messagebox.showwarning("สต็อกหมด", f"สินค้า '{name}' เหลือเพียง {current_stock} ชิ้น")
-                        return
-                
-                existing_item = next((item for item in self.cart_items if item['barcode'] == barcode), None)
-                if existing_item:
-                    existing_item['qty'] += 1
-                    existing_item['total'] = existing_item['qty'] * existing_item['price']
+                    self.play_sound("success")
+                    result_text = f"📦 {name}\n\n💰 ราคา: ฿{price:,.2f}\n📊 สต็อก: {current_stock} ชิ้น"
+                    result_label.configure(text=result_text, text_color="white", justify="left")
+                    
                 else:
-                    self.cart_items.append({
-                        'barcode': barcode, 'name': name, 'qty': 1, 'price': price,
-                        'total': price, 'row_idx': row_idx
-                    })
+                    self.play_sound("error")
+                    result_label.configure(text=f"❌ ไม่พบบาร์โค้ด: {barcode}", text_color="#E74C3C")
                 
-                self.play_sound("success")
-                self.lbl_last_scan.configure(text=f"เพิ่ม: {name} (฿{price:,.2f})")
-                self.update_cart_ui()
-                dialog.destroy()
-                
-            except Exception as inner_error:
-                print(f"Error while adding: {inner_error}")
-                messagebox.showerror("ข้อผิดพลาด", f"เกิดข้อผิดพลาด: {inner_error}")
-                return
-            
-            if not found_product:
-                messagebox.showerror("ไม่พบสินค้า", f"ไม่พบ Barcode: {barcode}\n\nกรุณาตรวจสอบและลองใหม่")
                 entry_barcode.delete(0, "end")
                 entry_barcode.focus()
+                
+            except Exception as inner_error:
+                print(f"Error checking price: {inner_error}")
+                result_label.configure(text=f"⚠️ เกิดข้อผิดพลาด", text_color="#E74C3C")
         
         # Bind Enter key
-        entry_barcode.bind('<Return>', lambda e: add_from_dialog())
-        entry_price.bind('<Return>', lambda e: add_from_dialog())
+        entry_barcode.bind('<Return>', lambda e: check_price())
         
-        # ปุ่มบันทึก
+        # ข้อความแนะนำ
+        hint_frame = ctk.CTkFrame(dialog, fg_color="gray30", corner_radius=8)
+        hint_frame.pack(pady=15, padx=20, fill="x")
+        ctk.CTkLabel(hint_frame, text="💡 วิธีใช้: วาง Barcode/QR Code ที่ช่องข้างบน แล้วระบบจะแสดงราคาและสต็อกทันที", 
+                        font=("Kanit", 11), text_color="gray80", justify="left").pack(padx=15, pady=12)
+        
+        # ปุ่มบันทึก - เพิ่มขนาดให้เต็มๆ
         btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         btn_frame.pack(pady=15, padx=20, fill="x")
         
-        ctk.CTkButton(btn_frame, text="✓ เพิ่มลงตะกร้า", command=add_from_dialog, 
-                     font=("Kanit", 12, "bold"), fg_color="#27AE60", hover_color="#1E8449", height=40).pack(side="left", fill="x", expand=True, padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="✕ ยกเลิก", command=dialog.destroy, 
-                     font=("Kanit", 12), fg_color="#E74C3C", hover_color="#C0392B", height=40).pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(btn_frame, text="✓ เช็คราคา", command=check_price, 
+                     font=("Kanit", 13, "bold"), fg_color="#27AE60", hover_color="#1E8449", height=50).pack(side="left", fill="both", expand=True, padx=(0, 10))
+        ctk.CTkButton(btn_frame, text="✕ ปิด", command=dialog.destroy, 
+                     font=("Kanit", 13, "bold"), fg_color="#E74C3C", hover_color="#C0392B", height=50).pack(side="left", fill="both", expand=True)
 
     def update_cart_ui(self):
         for i in self.cart_tree.get_children(): self.cart_tree.delete(i)
@@ -1486,14 +1463,14 @@ objShell.MinimizeAll()
         """แสดงหน้าต่างยืนยันการรับเงินก่อนบันทึก"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("ยืนยันการรับเงิน")
-        dialog.geometry("500x550")
+        dialog.geometry("500x600")
         dialog.resizable(False, False)
         dialog.attributes('-topmost', True)
         
         # Center dialog
         dialog.update_idletasks()
         x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (550 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (600 // 2)
         dialog.geometry(f"+{x}+{y}")
         
         dialog.grab_set()
@@ -1808,14 +1785,16 @@ objShell.MinimizeAll()
         """แสดง dialog ยืนยันการรับเงินสำหรับการจ่ายแบบอื่น (เงินสด, QR Code, Credit Card)"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("ยืนยันการรับเงิน")
-        dialog.geometry("500x400")
+        # ความสูงแบบไดนามิก - ใช้ความสูงพื้นฐานแล้วเพิ่มพื้นที่
+        dialog_height = 380
+        dialog.geometry(f"500x{dialog_height}")
         dialog.resizable(False, False)
         dialog.attributes('-topmost', True)
         
         # Center dialog
         dialog.update_idletasks()
         x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (400 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog_height // 2)
         dialog.geometry(f"+{x}+{y}")
         
         dialog.grab_set()
@@ -1828,32 +1807,32 @@ objShell.MinimizeAll()
         ctk.CTkLabel(header, text="💰 ยืนยันการรับเงิน", 
                      font=("Kanit", 22, "bold"), text_color="white").pack(pady=20)
         
-        # Content frame
+        # Content frame with scroll if needed
         main_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=15)
         
         # ยอดชำระ
         amount_frame = ctk.CTkFrame(main_frame, fg_color="gray20", corner_radius=10)
-        amount_frame.pack(fill="x", pady=(0, 20))
+        amount_frame.pack(fill="x", pady=(0, 15))
         
         ctk.CTkLabel(amount_frame, text="ยอดชำระเงิน:", 
-                     font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(15, 5))
+                     font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(12, 3))
         ctk.CTkLabel(amount_frame, text=f"฿ {amount:,.2f}", 
-                     font=("Kanit", 28, "bold"), text_color="#2ECC71").pack(anchor="w", padx=15, pady=(0, 15))
+                     font=("Kanit", 26, "bold"), text_color="#2ECC71").pack(anchor="w", padx=15, pady=(0, 12))
         
         # วิธีชำระเงิน
         method_frame = ctk.CTkFrame(main_frame, fg_color="gray20", corner_radius=10)
-        method_frame.pack(fill="x", pady=(0, 20))
+        method_frame.pack(fill="x", pady=(0, 15))
         
         ctk.CTkLabel(method_frame, text="วิธีชำระเงิน:", 
-                     font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(15, 5))
+                     font=("Kanit", 13), text_color="gray").pack(anchor="w", padx=15, pady=(12, 3))
         payment_emoji = "💵" if payment_method == "เงินสด" else "📱" if payment_method == "QR Code" else "💳"
         ctk.CTkLabel(method_frame, text=f"{payment_emoji} {payment_method}", 
-                     font=("Kanit", 16, "bold"), text_color="white").pack(anchor="w", padx=15, pady=(0, 15))
+                     font=("Kanit", 16, "bold"), text_color="white").pack(anchor="w", padx=15, pady=(0, 12))
         
         # Buttons
         button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        button_frame.pack(fill="x", pady=(10, 0))
+        button_frame.pack(fill="x", pady=(5, 0))
         
         result = {"confirmed": False}
         
@@ -1867,15 +1846,15 @@ objShell.MinimizeAll()
         
         ctk.CTkButton(button_frame, text="✅ ยืนยันและสร้างใบเสร็จ", 
                       command=confirm,
-                      font=("Kanit", 14, "bold"),
-                      height=50,
+                      font=("Kanit", 13, "bold"),
+                      height=48,
                       fg_color="#27AE60",
                       hover_color="#1E8449").pack(side="left", fill="both", expand=True, padx=(0, 8))
         
         ctk.CTkButton(button_frame, text="❌ ยกเลิก", 
                       command=cancel,
-                      font=("Kanit", 14, "bold"),
-                      height=50,
+                      font=("Kanit", 13, "bold"),
+                      height=48,
                       fg_color="#E74C3C",
                       hover_color="#C0392B").pack(side="right", fill="both", expand=True, padx=(8, 0))
         
@@ -1909,7 +1888,7 @@ objShell.MinimizeAll()
 
         # ตั้งค่า ttk.Style ให้ชัดเจน เพื่อแก้ไข font scaling issue
         style = ttk.Style()
-        style.configure("Treeview", font=("Kanit", 10), rowheight=25)
+        style.configure("Treeview", font=("Kanit", 12), rowheight=15)
         style.configure("Treeview.Heading", font=("Kanit", 11, "bold"))
         
         columns = ("ID", "Barcode", "Name", "Brand", "Car Model", "Detail", "Cost", "Stock", "Price", "ImageID")
@@ -2483,9 +2462,9 @@ objShell.MinimizeAll()
         self.new_price = self.create_styled_entry(self.add_window, "ราคาขาย", "PRICE")
         self.new_image_path = None
         ctk.CTkButton(self.add_window, text="📁 เลือกรูป", command=self.choose_new_image,
-                 border_width=2, border_color="#3498DB").pack(pady=5)
+                 border_width=2, border_color="#3498DB", font=("Kanit", 13, "bold")).pack(pady=5)
         ctk.CTkButton(self.add_window, text="✓ บันทึก", command=self.save_new_product, 
-                  fg_color="#2CC985", height=50, border_width=2, border_color="#229954").pack(pady=20, fill="x", padx=20)
+                  fg_color="#2CC985", height=50, border_width=2, border_color="#229954", font=("Kanit", 14, "bold")).pack(pady=20, fill="x", padx=20)
 
     def choose_new_image(self):
         self.new_image_path = filedialog.askopenfilename(filetypes=[("Images", "*.jpg;*.png")])
@@ -2570,12 +2549,12 @@ objShell.MinimizeAll()
         # Receipt ID Search
         ctk.CTkLabel(filter_search_frame, text="🔍 ค้นหาใบเสร็จ:", font=("Kanit", 12, "bold")).pack(side="left", padx=5)
         
-        self.search_receipt_entry = ctk.CTkEntry(filter_search_frame, placeholder_text="ป้อนเลขที่ใบเสร็จ...", width=150, height=32)
+        self.search_receipt_entry = ctk.CTkEntry(filter_search_frame, placeholder_text="ป้อนเลขที่ใบเสร็จ...", font=("Kanit", 12), width=150, height=40)
         self.search_receipt_entry.pack(side="left", padx=3)
         self.search_receipt_entry.bind("<Return>", lambda e: self.search_receipt_by_id())
         
         ctk.CTkButton(filter_search_frame, text="🔎 ค้นหา", command=self.search_receipt_by_id, 
-                     width=85, height=32, border_width=2, border_color="#3498DB").pack(side="left", padx=3)
+                     width=100, height=40, border_width=2, border_color="#3498DB", font=("Kanit", 12, "bold")).pack(side="left", padx=3)
         
         # Separator
         ctk.CTkLabel(filter_search_frame, text="|", font=("Kanit", 12)).pack(side="left", padx=5)
@@ -2590,10 +2569,10 @@ objShell.MinimizeAll()
         self.date_picker.pack(side="left", padx=3)
         
         ctk.CTkButton(filter_search_frame, text="🔍 ค้นหาตามวันที่", command=self.apply_date_filter, 
-                     width=130, height=32, border_width=2, border_color="#3498DB").pack(side="left", padx=3)
+                     width=160, height=40, border_width=2, border_color="#3498DB", font=("Kanit", 12, "bold")).pack(side="left", padx=3)
         
         ctk.CTkButton(filter_search_frame, text="📋 ดูทั้งหมด", command=self.show_all_history, 
-                     width=100, height=32, border_width=2, border_color="#27AE60").pack(side="left", padx=3)
+                     width=120, height=40, border_width=2, border_color="#27AE60", font=("Kanit", 12, "bold")).pack(side="left", padx=3)
         
         paned = ctk.CTkFrame(self.tab_history)
         paned.pack(fill="both", expand=True)
@@ -2603,7 +2582,7 @@ objShell.MinimizeAll()
         left_frame.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         
         ctk.CTkButton(left_frame, text="🔄 โหลดประวัติ", command=self.load_history_data, 
-                     border_width=2, border_color="#3498DB").pack(fill="x", pady=5)
+                     border_width=2, font=("Kanit", 12, "bold"), border_color="#3498DB").pack(fill="x", pady=5)
         
         # ตั้งค่า ttk.Style สำหรับ History tab
         style = ttk.Style()
@@ -2626,17 +2605,17 @@ objShell.MinimizeAll()
         
         # ตั้งค่า ttk.Style สำหรับ รายการสินค้า
         style = ttk.Style()
-        style.configure("ItemsTreeview", font=("Kanit", 10), rowheight=25)
+        style.configure("ItemsTreeview", font=("Kanit", 12), rowheight=20)
         style.configure("ItemsTreeview.Heading", font=("Kanit", 11, "bold"))
         
         # เพิ่มช่อง Barcode
-        self.tree_rec_items = ttk.Treeview(right_frame, columns=("Barcode", "Name", "Qty", "Price", "Total"), show="headings")
+        self.tree_rec_items = ttk.Treeview(right_frame, columns=("Barcode", "Name", "Qty", "Price", "Total"), show="headings", height=8)
         self.tree_rec_items.heading("Barcode", text="Barcode"); self.tree_rec_items.column("Barcode", width=100)
         self.tree_rec_items.heading("Name", text="สินค้า"); self.tree_rec_items.column("Name", width=180)
         self.tree_rec_items.heading("Qty", text="จำนวน"); self.tree_rec_items.column("Qty", width=60, anchor="center")
         self.tree_rec_items.heading("Price", text="ราคา/หน่วย"); self.tree_rec_items.column("Price", width=80, anchor="e")
         self.tree_rec_items.heading("Total", text="รวม"); self.tree_rec_items.column("Total", width=80, anchor="e")
-        self.tree_rec_items.pack(fill="both", expand=True, pady=10)
+        self.tree_rec_items.pack(fill="x", pady=3, padx=5)
         
         # เพิ่มส่วนแสดงข้อมูลใบเสร็จ (ยอดรวม, ส่วนลด, โค้ต)
         receipt_info_frame = ctk.CTkFrame(right_frame, fg_color="gray25", corner_radius=8)
@@ -2650,7 +2629,7 @@ objShell.MinimizeAll()
                                                         font=("Kanit", 12), text_color="#27AE60")
         self.lbl_receipt_coupon_received.pack(pady=3, padx=10, anchor="w")
         
-        self.lbl_receipt_summary = ctk.CTkLabel(receipt_info_frame, text="ยอดรวม: 0.00 บาท | ส่วนลด: 0.00 บาท | ยอดสุดท้าย: 0.00 บาท",
+        self.lbl_receipt_summary = ctk.CTkLabel(receipt_info_frame, text="ยอดรวม: 0.00 บาท | ภาษี VAT: 0.00 บาท | ส่วนลด: 0.00 บาท | ยอดสุดท้าย: 0.00 บาท",
                                                 font=("Kanit", 13, "bold"), text_color="#2CC985")
         self.lbl_receipt_summary.pack(pady=8, padx=10, anchor="w")
         
@@ -2838,6 +2817,11 @@ objShell.MinimizeAll()
             final_total = data.get('final_total', data.get('total_bill', 0.0))
             raw_total = data.get('total_bill', 0.0)
             
+            # คำนวณภาษี VAT 7% จากยอดหลังหักส่วนลด
+            vat_rate = 0.07
+            base_for_vat = raw_total - discount_total
+            vat_amount = base_for_vat * vat_rate
+            
             # แสดงโค้ตที่ใช้
             coupon_used_display = f"โค้ตที่ใช้: {coupon_used}" if coupon_used != '-' else "โค้ตที่ใช้: ไม่มี"
             self.lbl_receipt_coupon_used.configure(text=coupon_used_display)
@@ -2846,8 +2830,8 @@ objShell.MinimizeAll()
             coupon_received_display = f"โค้ตที่ได้รับ: {coupon_received}" if coupon_received != '-' else "โค้ตที่ได้รับ: ไม่มี"
             self.lbl_receipt_coupon_received.configure(text=coupon_received_display)
             
-            # แสดงสรุปยอดขาย
-            summary = f"ยอดรวม: {raw_total:,.2f} บาท | ส่วนลด: {discount_total:,.2f} บาท | ยอดสุดท้าย: {final_total:,.2f} บาท"
+            # แสดงสรุปยอดขายพร้อมภาษี VAT
+            summary = f"ยอดรวม: {raw_total:,.2f} บาท | ภาษี VAT: {vat_amount:,.2f} บาท | ส่วนลด: {discount_total:,.2f} บาท | ยอดสุดท้าย: {final_total:,.2f} บาท"
             self.lbl_receipt_summary.configure(text=summary)
             
             # แสดงสถานะการยกเลิก
@@ -3972,30 +3956,42 @@ objShell.MinimizeAll()
         
         ctk.CTkLabel(reports_frame, text="เลือกรายงาน:", font=("Kanit", 14, "bold")).pack(pady=10, anchor="w", padx=10)
         
-        btn_daily = ctk.CTkButton(reports_frame, text="📅 รายงานยอดขายรายวัน", 
+        # บรรทัดที่ 1: 2 ปุ่ม
+        row1_frame = ctk.CTkFrame(reports_frame, fg_color="transparent")
+        row1_frame.pack(fill="x", padx=10, pady=5)
+        
+        btn_daily = ctk.CTkButton(row1_frame, text="📅 รายงานยอดขายรายวัน", 
                                   command=lambda: self.show_report_type("daily"), 
-                                  font=("Kanit", 13, "bold"), height=45)
-        btn_daily.pack(fill="x", padx=10, pady=5)
+                                  font=("Kanit", 12, "bold"), height=40)
+        btn_daily.pack(side="left", fill="both", expand=True, padx=3)
         
-        btn_monthly = ctk.CTkButton(reports_frame, text="📊 รายงานยอดขายรายเดือน", 
+        btn_monthly = ctk.CTkButton(row1_frame, text="📊 รายงานยอดขายรายเดือน", 
                                     command=lambda: self.show_report_type("monthly"), 
-                                    font=("Kanit", 13, "bold"), height=45)
-        btn_monthly.pack(fill="x", padx=10, pady=5)
+                                    font=("Kanit", 12, "bold"), height=40)
+        btn_monthly.pack(side="left", fill="both", expand=True, padx=3)
         
-        btn_best_seller = ctk.CTkButton(reports_frame, text="⭐ รายงานสินค้าขายดี", 
+        # บรรทัดที่ 2: 2 ปุ่ม
+        row2_frame = ctk.CTkFrame(reports_frame, fg_color="transparent")
+        row2_frame.pack(fill="x", padx=10, pady=5)
+        
+        btn_best_seller = ctk.CTkButton(row2_frame, text="⭐ รายงานสินค้าขายดี", 
                                         command=lambda: self.show_report_type("best_seller"), 
-                                        font=("Kanit", 13, "bold"), height=45)
-        btn_best_seller.pack(fill="x", padx=10, pady=5)
+                                        font=("Kanit", 12, "bold"), height=40)
+        btn_best_seller.pack(side="left", fill="both", expand=True, padx=3)
         
-        btn_stock = ctk.CTkButton(reports_frame, text="📦 รายงานสต็อกคงเหลือ", 
+        btn_stock = ctk.CTkButton(row2_frame, text="📦 รายงานสต็อกคงเหลือ", 
                                   command=lambda: self.show_report_type("stock"), 
-                                  font=("Kanit", 13, "bold"), height=45)
-        btn_stock.pack(fill="x", padx=10, pady=5)
+                                  font=("Kanit", 12, "bold"), height=40)
+        btn_stock.pack(side="left", fill="both", expand=True, padx=3)
         
-        btn_profit = ctk.CTkButton(reports_frame, text="💰 รายงานกำไรขาดทุน", 
+        # บรรทัดที่ 3: 1 ปุ่ม
+        row3_frame = ctk.CTkFrame(reports_frame, fg_color="transparent")
+        row3_frame.pack(fill="x", padx=10, pady=5)
+        
+        btn_profit = ctk.CTkButton(row3_frame, text="💰 รายงานกำไรขาดทุน", 
                                    command=lambda: self.show_report_type("profit"), 
-                                   font=("Kanit", 13, "bold"), height=45)
-        btn_profit.pack(fill="x", padx=10, pady=5)
+                                   font=("Kanit", 12, "bold"), height=40)
+        btn_profit.pack(side="left", fill="both", expand=True, padx=3)
         
         # พื้นที่แสดงผลรายงาน
         report_display_frame = ctk.CTkFrame(main_scroll, fg_color="gray25", corner_radius=10)
@@ -4097,11 +4093,18 @@ objShell.MinimizeAll()
         # นับจำนวนใบเสร็จที่ไม่ซ้ำ
         bill_count = len(unique_bills)
         
+        # คำนวณภาษี VAT 7%
+        vat_rate = 0.07
+        vat_amount = total_sales * vat_rate
+        total_with_vat = total_sales + vat_amount
+        
         report_text = f"📊 รายงานสรุปยอดขาย\n"
         report_text += f"{'='*60}\n"
         report_text += f"ช่วงวันที่: {date_from} ถึง {date_to}\n\n"
         
         report_text += f"💰 ยอดขายรวม: {total_sales:,.2f} บาท\n"
+        report_text += f"📋 ภาษี VAT (7%): {vat_amount:,.2f} บาท\n"
+        report_text += f"💵 รวมทั้งสิ้น: {total_with_vat:,.2f} บาท\n"
         report_text += f"📋 จำนวนใบเสร็จ: {bill_count} ใบ\n"
         report_text += f"❌ ใบเสร็จที่ยกเลิก: {cancelled_count} ใบ\n"
         report_text += f"📈 เฉลี่ยต่อใบเสร็จ: {(total_sales/bill_count if bill_count > 0 else 0):,.2f} บาท\n\n"
@@ -4110,13 +4113,15 @@ objShell.MinimizeAll()
         report_text += f"{'-'*60}\n"
         for date_key in sorted(daily_sales.keys()):
             data = daily_sales[date_key]
-            report_text += f"  {date_key}: {data['total']:>10,.2f} บาท ({data['count']} ใบ)\n"
+            daily_vat = data['total'] * vat_rate
+            report_text += f"  {date_key}: {data['total']:>10,.2f} บาท (ภาษี: {daily_vat:>8,.2f} บาท) ({data['count']} ใบ)\n"
         
         report_text += f"\n⭐ สินค้าขายดี TOP 10:\n"
         report_text += f"{'-'*60}\n"
         sorted_products = sorted(product_sales.items(), key=lambda x: x[1]["qty"], reverse=True)[:10]
         for i, (name, data) in enumerate(sorted_products, 1):
-            report_text += f"  {i}. {name[:20]:20} - {data['qty']} ชิ้น ({data['total']:,.2f} บาท)\n"
+            product_vat = data['total'] * vat_rate
+            report_text += f"  {i}. {name[:20]:20} - {data['qty']} ชิ้น (ขาย: {data['total']:,.2f} + ภาษี: {product_vat:,.2f} บาท)\n"
         
         self.report_text.insert("1.0", report_text)
 
@@ -4186,11 +4191,18 @@ objShell.MinimizeAll()
             receipt_count = len(today_receipts)
             avg_per_receipt = today_total / receipt_count if receipt_count > 0 else 0
             
+            # คำนวณภาษี VAT 7%
+            vat_rate = 0.07
+            vat_amount = today_total * vat_rate
+            total_with_vat = today_total + vat_amount
+            
             report_text = f"📅 รายงานยอดขายประจำวัน ({today})\n" + "="*60 + "\n\n"
             
             if today_receipts:
                 report_text += f"📌 ข้อมูลวันนี้\n"
                 report_text += f"   ยอดขาย: {today_total:>12,.2f} บาท\n"
+                report_text += f"   ภาษี VAT (7%): {vat_amount:>12,.2f} บาท\n"
+                report_text += f"   รวมทั้งสิ้น: {total_with_vat:>12,.2f} บาท\n"
                 report_text += f"   ใบเสร็จ: {receipt_count:>12} ใบ\n"
                 report_text += f"   เฉลี่ย: {avg_per_receipt:>12,.2f} บาท/ใบ\n\n"
                 report_text += "📋 รายการใบเสร็จ:\n"
@@ -4232,6 +4244,9 @@ objShell.MinimizeAll()
                     monthly_receipts[month_key]["receipts"].add(receipt_id)
                     monthly_receipts[month_key]["total"] += total
             
+            # คำนวณภาษี VAT 7%
+            vat_rate = 0.07
+            
             report_text = "📊 รายงานยอดขายรายเดือน\n" + "="*60 + "\n\n"
             
             if monthly_receipts:
@@ -4239,8 +4254,12 @@ objShell.MinimizeAll()
                     data = monthly_receipts[month_key]
                     receipt_count = len(data["receipts"])
                     avg_per_receipt = data['total'] / receipt_count if receipt_count > 0 else 0
+                    month_vat = data['total'] * vat_rate
+                    total_with_vat = data['total'] + month_vat
                     report_text += f"📌 {month_key}\n"
                     report_text += f"   ยอดขาย: {data['total']:>12,.2f} บาท\n"
+                    report_text += f"   ภาษี VAT (7%): {month_vat:>12,.2f} บาท\n"
+                    report_text += f"   รวมทั้งสิ้น: {total_with_vat:>12,.2f} บาท\n"
                     report_text += f"   ใบเสร็จ: {receipt_count:>12} ใบ\n"
                     report_text += f"   เฉลี่ย: {avg_per_receipt:>12,.2f} บาท/ใบ\n\n"
             else:
@@ -4256,6 +4275,7 @@ objShell.MinimizeAll()
         """รายงานสินค้าขายดี TOP 20"""
         try:
             product_sales = defaultdict(lambda: {"qty": 0, "total": 0.0})
+            total_sales = 0.0
             
             if len(records) > 1:
                 for row in records[1:]:
@@ -4279,14 +4299,24 @@ objShell.MinimizeAll()
                     
                     product_sales[name]["qty"] += qty
                     product_sales[name]["total"] += total
+                    total_sales += total
+            
+            # คำนวณภาษี VAT 7%
+            vat_rate = 0.07
+            vat_amount = total_sales * vat_rate
+            total_with_vat = total_sales + vat_amount
             
             report_text = "⭐ รายงานสินค้าขายดี TOP 20\n" + "="*60 + "\n\n"
+            report_text += f"📊 ยอดขายรวม: {total_sales:,.2f} บาท\n"
+            report_text += f"📋 ภาษี VAT (7%): {vat_amount:,.2f} บาท\n"
+            report_text += f"💰 รวมทั้งสิ้น: {total_with_vat:,.2f} บาท\n\n"
             
             sorted_products = sorted(product_sales.items(), key=lambda x: x[1]["qty"], reverse=True)[:20]
             
             if sorted_products:
                 for i, (name, data) in enumerate(sorted_products, 1):
-                    report_text += f"{i:2}. {name[:30]:30} - {data['qty']:>6} ชิ้น ({data['total']:>10,.2f} บาท)\n"
+                    product_vat = data['total'] * vat_rate
+                    report_text += f"{i:2}. {name[:30]:30} - {data['qty']:>6} ชิ้น (ขาย: {data['total']:>10,.2f} + ภาษี: {product_vat:>8,.2f} บาท)\n"
             else:
                 report_text += "ไม่มีข้อมูล\n"
             
@@ -4361,10 +4391,19 @@ objShell.MinimizeAll()
                     report_text += f"{item['no']:<5} {item['barcode']:<15} {name_display:<35} "
                     report_text += f"฿{item['price']:<11,.2f} {item['stock']:<8} ฿{item['value']:>13,.2f}\n"
                 
+                # คำนวณภาษี VAT 7%
+                vat_rate = 0.07
+                vat_amount = total_value * vat_rate
+                total_with_vat = total_value + vat_amount
+                
                 # แสดงรายการสรุป
                 report_text += "-" * 90 + "\n"
                 report_text += f"{'รวมทั้งหมด':<5} {'':<15} {'':<35} "
                 report_text += f"{'':<12} {total_qty:<8} ฿{total_value:>13,.2f}\n"
+                report_text += f"{'ภาษี VAT (7%)':<5} {'':<15} {'':<35} "
+                report_text += f"{'':<12} {'':<8} ฿{vat_amount:>13,.2f}\n"
+                report_text += f"{'รวมค่าสินค้า':<5} {'':<15} {'':<35} "
+                report_text += f"{'':<12} {'':<8} ฿{total_with_vat:>13,.2f}\n"
                 report_text += "=" * 90 + "\n\n"
                 
                 # เพิ่มสรุปสถิติ
@@ -4373,6 +4412,8 @@ objShell.MinimizeAll()
                 report_text += f"  • รวมทั้งสิ้น: {len(stock_items)} ชิ้นประเภท\n"
                 report_text += f"  • จำนวนสินค้าทั้งสิ้น: {total_qty} ชิ้น\n"
                 report_text += f"  • มูลค่าสต็อก: ฿{total_value:,.2f}\n"
+                report_text += f"  • ภาษี VAT (7%): ฿{vat_amount:,.2f}\n"
+                report_text += f"  • รวมค่าสินค้า: ฿{total_with_vat:,.2f}\n"
                 report_text += f"  • สินค้าเหลือน้อย (< 5 ชิ้น): {len(low_stock_items)} รายการ\n"
                 
                 if low_stock_items:
@@ -4517,6 +4558,11 @@ objShell.MinimizeAll()
             profit = total_sales - total_cost
             profit_margin = (profit / total_sales * 100) if total_sales > 0 else 0
             
+            # คำนวณภาษี VAT 7%
+            vat_rate = 0.07
+            vat_amount = total_sales * vat_rate
+            total_with_vat = total_sales + vat_amount
+            
             # สร้างรายงาน
             report_text = "💰 รายงานกำไรขาดทุน\n"
             report_text += "=" * 100 + "\n\n"
@@ -4527,6 +4573,8 @@ objShell.MinimizeAll()
             report_text += f"  รวมจำนวนรายการที่ขาย: {len(sales_details)} รายการ\n"
             report_text += f"  รวมจำนวนสินค้า:       {total_qty} ชิ้น\n"
             report_text += f"  ยอดรวมขาย:            ฿{total_sales:>15,.2f}\n"
+            report_text += f"  ภาษี VAT (7%):         ฿{vat_amount:>15,.2f}\n"
+            report_text += f"  รวมพร้อมภาษี:         ฿{total_with_vat:>15,.2f}\n"
             report_text += f"  ต้นทุนสินค้าขาย:       ฿{total_cost:>15,.2f}\n"
             report_text += "\n"
             
@@ -4558,6 +4606,10 @@ objShell.MinimizeAll()
                 report_text += "-" * 100 + "\n"
                 report_text += f"{'รวม':<5} {'':<30} {total_qty:<8} "
                 report_text += f"{'':<15} ฿{total_sales:<14,.2f} ฿{total_cost:<14,.2f} ฿{profit:<14,.2f}\n"
+                report_text += f"{'ภาษี VAT (7%)':<5} {'':<30} {'':<8} "
+                report_text += f"{'':<15} ฿{vat_amount:<14,.2f} {'':<14} {'':<14}\n"
+                report_text += f"{'รวมพร้อมภาษี':<5} {'':<30} {'':<8} "
+                report_text += f"{'':<15} ฿{total_with_vat:<14,.2f} ฿{total_cost:<14,.2f} ฿{profit:<14,.2f}\n"
                 report_text += "=" * 100 + "\n\n"
             
             # ส่วนที่ 4: สรุปผล
@@ -6761,9 +6813,27 @@ https://developers.facebook.com/tools/explorer/
         try:
             pdf_path = os.path.join(self.receipts_folder, f"{receipt_id}.pdf")
             
-            # สร้าง PDF ด้วย fpdf2
-            from fpdf import XPos, YPos
-            pdf = FPDF(format=(80, 200), unit="mm")
+            # คำนวณความยาวของ PDF ตามจำนวนรายการ
+            # ความสูงพื้นฐาน (หัวข้อ + ข้อมูล + เส้นคั่น + ส่วนท้าย TEL)
+            base_height = 110  # mm - ความสูงพื้นฐานจนถึง TEL line
+            # ความสูงต่อรายการสินค้า (5 mm ต่อแถว)
+            items_height = len(items) * 5  # mm
+            # ส่วนเพิ่มเติมสำหรับข้อมูลเพิ่มเติม (ส่วนลด, โค้ต, VAT)
+            extra_height = 0
+            if discount_amount > 0:
+                extra_height += 4
+            if used_coupon and used_coupon != "-":
+                extra_height += 4
+            if received_coupon and received_coupon != "-":
+                extra_height += 4
+            
+            # คำนวณความยาวรวม - ตัดที่ TEL ไม่รวม QR Code
+            pdf_height = base_height + items_height + extra_height
+            pdf_height = max(190, min(pdf_height, 260))  # ต่ำสุด 130mm สูงสุด 260mm
+            
+            # สร้าง PDF ด้วย fpdf2 และความสูงแบบไดนามิก
+            from fpdf import FPDF, XPos, YPos
+            pdf = FPDF(format=(80, pdf_height), unit="mm")
             pdf.add_page()
             
             # เพิ่ม Kanit font สำหรับภาษาไทย
@@ -6804,11 +6874,16 @@ https://developers.facebook.com/tools/explorer/
             except:
                 pass
             
-            # ชื่อร้าน - use Helvetica for English
-            pdf.set_font("Helvetica", "B", 14)
-            pdf.cell(0, 6, "JZ Auto Parts", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            # ดึงข้อมูลร้านจาก app_settings
+            shop_name = self.app_settings.get('shop_name', 'ร้านของฉัน') if hasattr(self, 'app_settings') else 'ร้านของฉัน'
+            shop_address = self.app_settings.get('shop_address', 'บ้านเลขที่ 123') if hasattr(self, 'app_settings') else 'บ้านเลขที่ 123'
+            shop_phone = self.app_settings.get('shop_phone', '02-123-4567') if hasattr(self, 'app_settings') else '02-123-4567'
+            
+            # ชื่อร้าน
             pdf.set_font(thai_font, "", 14)
-            pdf.cell(0, 4, "ร้านอะไหล่รถ JZ", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            pdf.cell(0, 6, shop_name, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            pdf.set_font(thai_font, "", 10)
+            pdf.cell(0, 4, shop_address, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
             
             # เส้นคั่น
             pdf.set_font(thai_font, "", 7)
@@ -6827,7 +6902,7 @@ https://developers.facebook.com/tools/explorer/
                 date_time = datetime.now()
             
             pdf.set_font(thai_font, "", 10)
-            pdf.cell(0, 4, f"เลขที่ : {receipt_id}", border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.cell(0, 4, f"เลขที่ใบเสร็จ : {receipt_id}", border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.cell(0, 4, f"วันที่ : {date_time.strftime('%d/%m/%Y')}", border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.cell(0, 4, f"เวลา : {date_time.strftime('%H:%M:%S')}", border=0, align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             
@@ -6870,8 +6945,9 @@ https://developers.facebook.com/tools/explorer/
             vat_amount = 0.0
             if hasattr(self, 'app_settings') and self.app_settings.get('vat_enabled', False):
                 vat_rate = self.app_settings.get('vat_rate', 7)
-                # คำนวณ VAT จากยอดรวมก่อนลด
-                vat_amount = total_bill * (vat_rate / 100)
+                # คำนวณ VAT จากยอดหลังหักส่วนลดแล้ว (total_bill - discount_amount)
+                base_for_vat = total_bill - discount_amount
+                vat_amount = base_for_vat * (vat_rate / 100)
                 pdf.cell(0, 4, f"ภาษี VAT ({vat_rate}%) : {vat_amount:,.2f} บาท", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="R")
             
             # ยอดที่จ่าย (รวม VAT)
@@ -6929,8 +7005,7 @@ https://developers.facebook.com/tools/explorer/
             
             
             pdf.set_font(thai_font, "", 10)
-            pdf.cell(0, 3, "FACEBOOK: PKN เครื่องเลื้อยไม้ เครื่องตัดหญ้า ราคาถูก", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
-            pdf.cell(0, 3, "TEL: 086-283-6944", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+            pdf.cell(0, 3, f"TEL: {shop_phone}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
             
             # บันทึก PDF
             pdf.output(pdf_path)
