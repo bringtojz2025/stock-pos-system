@@ -187,7 +187,8 @@ class StockManagerApp(ctk.CTk):
         self.cart_items = [] 
         self.enable_image_loading = True  # สามารถปิดได้หากมีปัญหา network
         self.last_coupon_checked = ""  # เก็บโค้ตที่ตรวจสอบไปแล้ว เพื่อแสดงเตือน 1 ครั้ง
-        self.sales_history_data = {} 
+        self.sales_history_data = {}
+        self.stock_alert_shown = False  # Flag เพื่อแสดง Stock Alert เพียงครั้งเดียวตอนเปิดโปรแกรม 
         
         # Image loading thread management
         self.current_image_thread = None  # เก็บ thread ปัจจุบันสำหรับยกเลิก
@@ -267,6 +268,26 @@ class StockManagerApp(ctk.CTk):
                     self.sheet_cut_stock.append_row(["ReceiptID", "Date", "Barcode", "Name", "Qty", "OldStock", "NewStock"])
                 except:
                     self.sheet_cut_stock = None
+            
+            # เพิ่ม Coupon sheet สำหรับบันทึกโค้ตส่วนลด
+            try:
+                self.sheet_coupon = self.sh.worksheet("Coupon")
+            except:
+                try:
+                    self.sheet_coupon = self.sh.add_worksheet(title="Coupon", rows="500", cols="6")
+                    self.sheet_coupon.append_row(["CouponCode", "Type", "Value", "Used", "Limit", "CreatedDate"])
+                except:
+                    self.sheet_coupon = None
+            
+            # เพิ่ม Campaign sheet สำหรับโปรแกรม Sale
+            try:
+                self.sheet_campaign = self.sh.worksheet("Campaign")
+            except:
+                try:
+                    self.sheet_campaign = self.sh.add_worksheet(title="Campaign", rows="500", cols="9")
+                    self.sheet_campaign.append_row(["CampaignName", "Barcode", "FullPrice", "DiscountPrice", "DiscountUntilDate", "Quantity", "Stock", "CreatedDate", "Status"])
+                except:
+                    self.sheet_campaign = None
         except Exception as e:
             print(f"Connection Error: {e}")
             import traceback; traceback.print_exc()
@@ -282,6 +303,19 @@ class StockManagerApp(ctk.CTk):
         # ตั้งค่าเริ่มต้นสำหรับปริ้นใบเสร็จ
         self.receipt_auto_print = False  # ปริ้นอัตโนมัติหรือไม่
         self.load_receipt_settings()
+        
+        # ตั้งค่า Application Settings (VAT, Stock Alert, etc.) แจ้งเตือน Stock ต่ำ
+        self.app_settings = {
+            'vat_rate': 7,
+            'vat_enabled': True,
+            'minimum_stock': 5,  # แจ้งเตือนเมื่อสต็อก < 5
+            'stock_alert_enabled': True
+        }
+        self.load_app_settings()
+        
+        # เก็บข้อมูล Coupon Management
+        self.coupon_database = {}  # {coupon_code: {'type': 'fixed'|'percent', 'value': float, 'used': int, 'limit': int}}
+        self.load_coupon_database()
         
         # ตั้งค่า ttk.Style สำหรับตารางทั้งหมด (ก่อนสร้าง treeview)
         self.setup_treeview_styles()
@@ -426,6 +460,7 @@ class StockManagerApp(ctk.CTk):
             ("📊 ภาพรวม", "dashboard", row2_frame),
             ("📈 รายงาน", "reports", row2_frame),
             ("🏭 ซัพพลายเออร์", "suppliers", row2_frame),
+            ("🎯 แคมเปญ Sale", "campaign", row2_frame),
             ("⚙️ ตั้งค่า", "settings", row2_frame),
         ]
         
@@ -468,6 +503,7 @@ class StockManagerApp(ctk.CTk):
         self.tab_dashboard = self.tab_frames['dashboard']['frame']
         self.tab_reports = self.tab_frames['reports']['frame']
         self.tab_suppliers = self.tab_frames['suppliers']['frame']
+        self.tab_campaign = self.tab_frames['campaign']['frame']
         self.tab_settings = self.tab_frames['settings']['frame']
         
         # ตั้งค่าแท็บแรกให้เป็นค่าเริ่มต้น
@@ -500,6 +536,7 @@ class StockManagerApp(ctk.CTk):
                 'dashboard': self.setup_dashboard_tab,
                 'reports': self.setup_reports_tab,
                 'suppliers': self.setup_suppliers_tab,
+                'campaign': self.setup_campaign_tab,
                 'settings': self.setup_settings_tab,
             }
             if tab_key in setup_methods:
@@ -524,6 +561,11 @@ class StockManagerApp(ctk.CTk):
             self.load_customers_data()
             # โหลดข้อมูลซัพพลายเออร์
             self.load_suppliers()
+            
+            # แสดง Stock Alert เพียงครั้งเดียวตอนเปิดโปรแกรม
+            if not self.stock_alert_shown and self.app_settings.get('stock_alert_enabled', True):
+                self.stock_alert_shown = True
+                self.show_low_stock_report()
             
             # ซ่อน loading screen
             if self.app_running and self.winfo_exists():
@@ -867,17 +909,152 @@ objShell.MinimizeAll()
                 messagebox.showwarning("สต็อกหมด", f"สินค้า '{name}' เหลือเพียง {current_stock} ชิ้น")
                 self.pos_barcode.delete(0, "end")
                 return
+            
+            # ตรวจสอบว่าสินค้านี้อยู่ในแคมเปญหรือไม่
+            campaign_price = price
+            is_campaign = False
+            campaign_name = ""
+            for campaign_key, campaign in self.campaigns_data.items():
+                if campaign['barcode'] == barcode and campaign['status'] == 'Active':
+                    # ตรวจสอบว่าแคมเปญยังไม่หมดอายุ
+                    try:
+                        discount_until = datetime.strptime(campaign['discount_until'], "%Y-%m-%d")
+                        if datetime.now() <= discount_until:
+                            # เช็คจำนวนสต็อก Campaign ว่าพอสำหรับใบเสร็จนี้หรือไม่
+                            campaign_stock = campaign.get('stock', 0)
+                            qty_in_campaign_cart = sum(item['qty'] for item in self.cart_items if item['barcode'] == barcode)
+                            
+                            if qty_in_campaign_cart >= campaign_stock:
+                                # แจ้งเตือนว่าสต็อกแคมเปญหมดแล้ว กลับไปใช้ราคาปกติ - ด้วย Dialog สวยงาม
+                                out_of_stock_dialog = ctk.CTkToplevel(self)
+                                out_of_stock_dialog.title("⚠️ สินค้าแคมเปญหมดแล้ว")
+                                out_of_stock_dialog.geometry("480x580")
+                                out_of_stock_dialog.grab_set()
+                                self.after(100, lambda: self.center_window(out_of_stock_dialog))
+                                
+                                # Header - สีแดง/ส้ม
+                                header = ctk.CTkFrame(out_of_stock_dialog, fg_color="#E74C3C", corner_radius=0)
+                                header.pack(fill="x", ipady=15)
+                                ctk.CTkLabel(header, text="⚠️ สินค้าแคมเปญหมดแล้ว", font=("Kanit", 18, "bold"), 
+                                            text_color="white").pack(expand=True)
+                                
+                                # Content frame
+                                content = ctk.CTkFrame(out_of_stock_dialog, fg_color="transparent")
+                                content.pack(fill="both", expand=True, padx=20, pady=20)
+                                
+                                # ชื่อสินค้า
+                                ctk.CTkLabel(content, text="📦 สินค้า:", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(5, 2))
+                                ctk.CTkLabel(content, text=name, font=("Kanit", 14), text_color="#E67E22").pack(anchor="w", pady=(0, 15))
+                                
+                                # สถานะสต็อก
+                                ctk.CTkLabel(content, text="📉 สถานะสต็อก:", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(5, 2))
+                                stock_info = ctk.CTkFrame(content, fg_color="gray25", corner_radius=8)
+                                stock_info.pack(fill="x", pady=(0, 15))
+                                ctk.CTkLabel(stock_info, text=f"สต็อกแคมเปญเหลือเพียง {campaign_stock} ชิ้น", 
+                                            font=("Kanit", 13, "bold"), text_color="#E74C3C").pack(pady=10)
+                                
+                                # ราคาปกติ
+                                ctk.CTkLabel(content, text="💰 ราคาปกติ:", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(5, 2))
+                                price_info = ctk.CTkFrame(content, fg_color="gray25", corner_radius=8)
+                                price_info.pack(fill="x", pady=(0, 15))
+                                ctk.CTkLabel(price_info, text=f"฿{price:,.2f}", 
+                                            font=("Kanit", 18, "bold"), text_color="#27AE60").pack(pady=10)
+                                
+                                # ข้อความแจ้ง
+                                info_frame = ctk.CTkFrame(content, fg_color="gray20", corner_radius=8)
+                                info_frame.pack(fill="x", pady=10)
+                                ctk.CTkLabel(info_frame, text="ℹ️ คำสั่งซื้อนี้จะใช้ราคาปกติแทนราคาลด", 
+                                            font=("Kanit", 12), text_color="#95A5A6", wraplength=400, justify="left").pack(pady=10, padx=10)
+                                
+                                # Close button
+                                ctk.CTkButton(out_of_stock_dialog, text="✓ ตกลง", command=out_of_stock_dialog.destroy,
+                                             font=("Kanit", 14, "bold"), height=40, fg_color="#3498DB").pack(fill="x", padx=20, pady=10)
+                                
+                                # ใช้ราคาปกติแทน
+                                campaign_price = price
+                                is_campaign = False
+                            else:
+                                # สต็อกพอ ใช้ราคาแคมเปญ
+                                campaign_price = campaign['discount_price']
+                                is_campaign = True
+                                campaign_name = campaign['name']
+                            break
+                    except:
+                        pass
+            
             existing_item = next((item for item in self.cart_items if item['barcode'] == barcode), None)
             if existing_item:
                 existing_item['qty'] += 1
                 existing_item['total'] = existing_item['qty'] * existing_item['price']
             else:
                 self.cart_items.append({
-                    'barcode': barcode, 'name': name, 'qty': 1, 'price': price,
-                    'total': price, 'row_idx': row_idx
+                    'barcode': barcode, 'name': name, 'qty': 1, 'price': campaign_price,
+                    'total': campaign_price, 'row_idx': row_idx, 'original_price': price
                 })
+            
             self.play_sound("success")
-            self.lbl_last_scan.configure(text=f"ล่าสุด: {name} (฿{price})")
+            
+            # แสดงข้อมูล
+            if is_campaign:
+                self.lbl_last_scan.configure(text=f"🎯 แคมเปญ '{campaign_name}': {name} (฿{campaign_price})", text_color="#FF9800")
+                # สร้าง Dialog สวยงาม แทน messagebox
+                campaign_dialog = ctk.CTkToplevel(self)
+                campaign_dialog.title("✅ เป็นสินค้าแคมเปญ")
+                campaign_dialog.geometry("450x600")
+                campaign_dialog.grab_set()
+                self.after(100, lambda: self.center_window(campaign_dialog))
+                
+                # Header
+                header = ctk.CTkFrame(campaign_dialog, fg_color="#FF9800", corner_radius=0)
+                header.pack(fill="x", ipady=15)
+                ctk.CTkLabel(header, text="🎯 เป็นสินค้าแคมเปญ", font=("Kanit", 18, "bold"), 
+                            text_color="white").pack(expand=True)
+                
+                # Content frame
+                content = ctk.CTkFrame(campaign_dialog, fg_color="transparent")
+                content.pack(fill="both", expand=True, padx=20, pady=20)
+                
+                # ชื่อสินค้า
+                ctk.CTkLabel(content, text="📌 ชื่อสินค้า:", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(5, 2))
+                ctk.CTkLabel(content, text=name, font=("Kanit", 14), text_color="#3498DB").pack(anchor="w", pady=(0, 10))
+                
+                # ชื่อแคมเปญ
+                ctk.CTkLabel(content, text="🎁 แคมเปญ:", font=("Kanit", 14, "bold")).pack(anchor="w", pady=(5, 2))
+                ctk.CTkLabel(content, text=campaign_name, font=("Kanit", 14, "bold"), 
+                            text_color="#FF9800").pack(anchor="w", pady=(0, 10))
+                
+                # Price comparison
+                price_frame = ctk.CTkFrame(content, fg_color="transparent")
+                price_frame.pack(fill="x", pady=10)
+                
+                ctk.CTkLabel(price_frame, text="💰 ราคาเต็ม:", font=("Kanit", 14, "bold"),
+                            text_color="#95A5A6").pack(side="left", anchor="w")
+                ctk.CTkLabel(price_frame, text=f"฿{price:,.2f}", font=("Kanit", 14),
+                            text_color="#7F8C8D").pack(side="left", padx=10)
+                ctk.CTkLabel(price_frame, text="", font=("Kanit", 2)).pack(side="left", expand=True)
+                
+                discount_frame = ctk.CTkFrame(content, fg_color="transparent")
+                discount_frame.pack(fill="x", pady=5)
+                
+                ctk.CTkLabel(discount_frame, text="🎯 ราคาลด:", font=("Kanit", 14, "bold"),
+                            text_color="#95A5A6").pack(side="left", anchor="w")
+                ctk.CTkLabel(discount_frame, text=f"฿{campaign_price:,.2f}", font=("Kanit", 14, "bold"),
+                            text_color="#2CC985").pack(side="left", padx=10)
+                ctk.CTkLabel(discount_frame, text="", font=("Kanit", 2)).pack(side="left", expand=True)
+                
+                # Saving amount
+                saving = price - campaign_price
+                saving_frame = ctk.CTkFrame(content, fg_color="gray25", corner_radius=8)
+                saving_frame.pack(fill="x", pady=10)
+                ctk.CTkLabel(saving_frame, text=f"💳 ประหยัด ฿{saving:,.2f}", 
+                            font=("Kanit", 14, "bold"), text_color="#27AE60").pack(pady=10)
+                
+                # Close button
+                ctk.CTkButton(campaign_dialog, text="✓ ตกลง", command=campaign_dialog.destroy,
+                             font=("Kanit", 14, "bold"), height=35, fg_color="#2CC985").pack(fill="x", padx=20, pady=10)
+            else:
+                self.lbl_last_scan.configure(text=f"ล่าสุด: {name} (฿{price})", text_color="white")
+            
             self.update_cart_ui()
             self.pos_barcode.delete(0, "end")
         else:
@@ -1275,64 +1452,145 @@ objShell.MinimizeAll()
         is_used_coupon = False
         
         if discount_code:
-            # ตรวจสอบว่าเป็นโค้ตที่เคยใช้แล้วหรือไม่
-            # เฉพาะถ้าเป็น "DISC10-XXXXX", "SPECIAL", "DISCXX" หรือ custom code ที่ไม่เป็นตัวเลขเพียงอย่างเดียว
-            used_coupons = self.check_used_coupons()
-            
             # ตรวจสอบรูปแบบโค้ต
             is_valid_code = False
             discount_percent = 0
             
-            if discount_code in used_coupons:
-                # โค้ตนี้เคยใช้แล้ว
-                coupon_status = "✗ ใช้แล้ว"
-                status_color = "#E74C3C"
-                discount_amount = 0.0
-                is_used_coupon = True
-                is_valid_code = True
-                if discount_code != self.last_coupon_checked:
-                    show_warning = True
-                    self.last_coupon_checked = discount_code
+            # ตรวจสอบจาก Google Sheet coupon_database ก่อน
+            if discount_code in self.coupon_database:
+                coupon = self.coupon_database[discount_code]
+                limit = coupon.get('limit', 0)
+                used = coupon.get('used', 0)
+                
+                # ตรวจสอบว่าใช้ครบแล้วหรือไม่
+                if limit > 0 and used >= limit:
+                    coupon_status = f"✗ ใช้ครบแล้ว ({used}/{limit})"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                else:
+                    # โค้ตยังสามารถใช้ได้
+                    coupon_type = coupon.get('type', 'percent').lower()
+                    value = coupon.get('value', 0)
+                    
+                    if coupon_type == 'fixed':
+                        discount_amount = min(float(value), total_amount)
+                        # แสดง (used/limit) สำหรับคูปองจาก Google Sheet
+                        if limit > 0:
+                            coupon_status = f"✓ ลดคงที่ ฿{value:.2f} ({used}/{limit})"
+                        else:
+                            coupon_status = f"✓ ลดคงที่ ฿{value:.2f} (ไม่จำกัด)"
+                    else:  # percent
+                        discount_amount = total_amount * (float(value) / 100)
+                        # แสดง (used/limit) สำหรับคูปองจาก Google Sheet
+                        if limit > 0:
+                            coupon_status = f"✓ ลด {value}% ({used}/{limit})"
+                        else:
+                            coupon_status = f"✓ ลด {value}% (ไม่จำกัด)"
+                    
+                    status_color = "#27AE60"
+                    is_valid_code = True
             
+            # ตรวจสอบ hardcoded coupon
             elif discount_code.startswith("DISC10"):
-                # DISC10 ยังไม่เคยใช้
-                is_valid_code = True
-                discount_percent = 10
-                discount_amount = total_amount * 0.10
-                coupon_status = "✓ DISC10 (ลด 10%)"
+                # ตรวจสอบว่าถูกใช้แล้วหรือไม่ (เฉพาะ hardcoded)
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISC10 ยังไม่เคยใช้
+                    is_valid_code = True
+                    discount_percent = 10
+                    discount_amount = total_amount * 0.10
+                    coupon_status = "✓ DISC10 (ลด 10%)"
             
             elif discount_code.startswith("DISC15"):
-                # DISC15
-                is_valid_code = True
-                discount_percent = 15
-                discount_amount = total_amount * 0.15
-                coupon_status = "✓ DISC15 (ลด 15%)"
+                # ตรวจสอบว่าถูกใช้แล้วหรือไม่
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISC15
+                    is_valid_code = True
+                    discount_percent = 15
+                    discount_amount = total_amount * 0.15
+                    coupon_status = "✓ DISC15 (ลด 15%)"
             
             elif discount_code.startswith("DISC20"):
-                # DISC20
-                is_valid_code = True
-                discount_percent = 20
-                discount_amount = total_amount * 0.20
-                coupon_status = "✓ DISC20 (ลด 20%)"
+                # ตรวจสอบว่าถูกใช้แล้วหรือไม่
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISC20
+                    is_valid_code = True
+                    discount_percent = 20
+                    discount_amount = total_amount * 0.20
+                    coupon_status = "✓ DISC20 (ลด 20%)"
             
             elif discount_code == "SPECIAL":
-                # SPECIAL ยังไม่เคยใช้
-                is_valid_code = True
-                discount_percent = 15
-                discount_amount = total_amount * 0.15
-                coupon_status = "✓ SPECIAL (ลด 15%)"
+                # ตรวจสอบว่าถูกใช้แล้วหรือไม่
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # SPECIAL ยังไม่เคยใช้
+                    is_valid_code = True
+                    discount_percent = 15
+                    discount_amount = total_amount * 0.15
+                    coupon_status = "✓ SPECIAL (ลด 15%)"
             
             elif discount_code.startswith("DISC"):
                 # DISCXX format อื่นๆ
-                try:
-                    percent = int(discount_code.split("-")[0].replace("DISC", ""))
-                    discount_amount = total_amount * (percent / 100)
-                    coupon_status = f"✓ DISC{percent} (ลด {percent}%)"
-                    is_valid_code = True
-                except:
-                    discount_amount = 0.0
-                    coupon_status = "✗ รูปแบบไม่ถูกต้อง"
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
                     status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    try:
+                        percent = int(discount_code.split("-")[0].replace("DISC", ""))
+                        discount_amount = total_amount * (percent / 100)
+                        coupon_status = f"✓ DISC{percent} (ลด {percent}%)"
+                        is_valid_code = True
+                    except:
+                        discount_amount = 0.0
+                        coupon_status = "✗ รูปแบบไม่ถูกต้อง"
+                        status_color = "#E74C3C"
             
             else:
                 # โค้ตที่ไม่รู้จัก
@@ -1370,12 +1628,6 @@ objShell.MinimizeAll()
                 f"💡 คูปองแต่ละใบสามารถใช้ได้แค่ครั้งเดียวเท่านั้น\n\n"
                 f"กรุณาตรวจสอบโค้ตของลูกค้าอีกครั้ง"
             ))
-        
-        # ปิดใช้งานปุ่ม checkout เฉพาะถ้ามีโค้ตที่ใช้แล้ว (เปิดให้เลือกโค้ตก่อนเพิ่มสินค้า)
-        if is_used_coupon:
-            self.btn_checkout.configure(state="disabled", text="❌ ไม่สามารถใช้โค้ตนี้ได้")
-        else:
-            self.btn_checkout.configure(state="normal", text="💰 ชำระเงิน / ตัดสต็อก")
 
     def process_checkout(self):
         if not self.cart_items:
@@ -1385,31 +1637,48 @@ objShell.MinimizeAll()
         coupon_code = self.discount_code_entry.get().strip().upper()
         payment_method = self.payment_method.get()
         
-        # ตรวจสอบว่าโค้ตถูกใช้แล้วหรือไม่ (ทั้งหมด DISC10, SPECIAL, DISCX และโค้ตอื่นๆ)
+        # ตรวจสอบว่าโค้ตถูกใช้แล้วหรือไม่
         if coupon_code:
-            used_coupons = self.check_used_coupons()
-            if coupon_code in used_coupons:
-                messagebox.showerror("⚠️ โค้ตถูกใช้แล้ว", 
-                    f"โค้ต '{coupon_code}' ได้ถูกใช้แล้ว\n❌ สามารถใช้ได้แค่ครั้งเดียวเท่านั้น\n\n"
-                    f"กรุณาตรวจสอบโค้ตอีกครั้ง")
-                self.discount_code_entry.delete(0, "end")
-                return
-            
-            # ตรวจสอบรูปแบบโค้ตว่า valid หรือไม่
             is_valid = False
-            if coupon_code.startswith("DISC10") or coupon_code.startswith("DISC15") or \
-               coupon_code.startswith("DISC20") or coupon_code == "SPECIAL" or \
-               coupon_code.startswith("DISC"):
-                try:
-                    if coupon_code.startswith("DISC"):
-                        # ทดลองแยก percent
-                        percent = int(coupon_code.split("-")[0].replace("DISC", ""))
-                        if 0 < percent <= 100:
+            
+            # ตรวจสอบจาก Google Sheet coupon_database ก่อน
+            if coupon_code in self.coupon_database:
+                # โค้ตจาก Google Sheet coupon_database
+                coupon = self.coupon_database[coupon_code]
+                limit = coupon.get('limit', 0)
+                used = coupon.get('used', 0)
+                # ตรวจสอบว่าใช้ครบแล้วหรือไม่
+                if limit > 0 and used >= limit:
+                    messagebox.showerror("❌ โค้ตใช้ครบแล้ว", 
+                        f"โค้ต '{coupon_code}' ใช้ครบแล้ว ({used}/{limit} ครั้ง)\n\n"
+                        f"กรุณาตรวจสอบโค้ตอีกครั้ง")
+                    self.discount_code_entry.delete(0, "end")
+                    return
+                is_valid = True
+            else:
+                # โค้ต hardcoded - ตรวจสอบว่าใช้แล้วหรือไม่จาก check_used_coupons
+                used_coupons = self.check_used_coupons()
+                if coupon_code in used_coupons:
+                    messagebox.showerror("⚠️ โค้ตถูกใช้แล้ว", 
+                        f"โค้ต '{coupon_code}' ได้ถูกใช้แล้ว\n❌ สามารถใช้ได้แค่ครั้งเดียวเท่านั้น\n\n"
+                        f"กรุณาตรวจสอบโค้ตอีกครั้ง")
+                    self.discount_code_entry.delete(0, "end")
+                    return
+                
+                # ตรวจสอบรูปแบบโค้ตว่า valid หรือไม่
+                if coupon_code.startswith("DISC10") or coupon_code.startswith("DISC15") or \
+                   coupon_code.startswith("DISC20") or coupon_code == "SPECIAL" or \
+                   coupon_code.startswith("DISC"):
+                    try:
+                        if coupon_code.startswith("DISC"):
+                            # ทดลองแยก percent
+                            percent = int(coupon_code.split("-")[0].replace("DISC", ""))
+                            if 0 < percent <= 100:
+                                is_valid = True
+                        elif coupon_code == "SPECIAL":
                             is_valid = True
-                    elif coupon_code == "SPECIAL":
-                        is_valid = True
-                except:
-                    is_valid = False
+                    except:
+                        is_valid = False
             
             if not is_valid:
                 messagebox.showerror("❌ โค้ตไม่ถูกต้อง", 
@@ -1419,6 +1688,7 @@ objShell.MinimizeAll()
                     f"• DISC15-XXXX (ลด 15%)\n"
                     f"• DISC20-XXXX (ลด 20%)\n"
                     f"• SPECIAL (ลด 15%)\n\n"
+                    f"หรือใช้โค้ตจาก Google Sheet Coupon\n\n"
                     f"กรุณาตรวจสอบโค้ตอีกครั้ง")
                 self.discount_code_entry.delete(0, "end")
                 return
@@ -1428,22 +1698,50 @@ objShell.MinimizeAll()
         used_coupon = ""  # โค้ตที่ใช้สำหรับส่วนลด
         received_coupon = ""  # โค้ตที่ได้รับ
         
+        # คำนวณส่วนลดจากสินค้าแคมเปญก่อน (นำส่วนต่างราคาจากแคมเปญมาคิดเป็นส่วนลด)
+        campaign_discount = 0.0
+        for item in self.cart_items:
+            if 'original_price' in item and item['original_price'] > item['price']:
+                # สินค้าที่มีราคาแคมเปญ ลดจาก original_price
+                discount_per_item = (item['original_price'] - item['price']) * item['qty']
+                campaign_discount += discount_per_item
+        
+        discount_amount = campaign_discount  # เริ่มต้นด้วยส่วนลดจากแคมเปญ
+        
         if coupon_code:
             used_coupon = coupon_code
-            if coupon_code.startswith("DISC10"):
-                discount_amount = total_amount * 0.10
+            
+            # ตรวจสอบจาก Google Sheet coupon_database ก่อน
+            if coupon_code in self.coupon_database:
+                coupon = self.coupon_database[coupon_code]
+                coupon_type = coupon.get('type', 'percent').lower()
+                value = coupon.get('value', 0)
+                
+                if coupon_type == 'fixed':
+                    coupon_discount = min(float(value), total_amount)
+                else:  # percent
+                    coupon_discount = total_amount * (float(value) / 100)
+                discount_amount += coupon_discount  # รวมส่วนลดจากโค้ต
+            
+            elif coupon_code.startswith("DISC10"):
+                coupon_discount = total_amount * 0.10
+                discount_amount += coupon_discount
             elif coupon_code.startswith("DISC15"):
-                discount_amount = total_amount * 0.15
+                coupon_discount = total_amount * 0.15
+                discount_amount += coupon_discount
             elif coupon_code.startswith("DISC20"):
-                discount_amount = total_amount * 0.20
+                coupon_discount = total_amount * 0.20
+                discount_amount += coupon_discount
             elif coupon_code == "SPECIAL":
-                discount_amount = total_amount * 0.15
+                coupon_discount = total_amount * 0.15
+                discount_amount += coupon_discount
             elif coupon_code.startswith("DISC"):
                 try:
                     percent = int(coupon_code.split("-")[0].replace("DISC", ""))
-                    discount_amount = total_amount * (percent / 100)
+                    coupon_discount = total_amount * (percent / 100)
+                    discount_amount += coupon_discount
                 except:
-                    discount_amount = 0.0
+                    pass
         
         # ตรวจสอบว่าลูกค้าได้รับโค้ตใหม่หรือไม่ (ซื้อครบ 500 บาท)
         final_amount = total_amount - discount_amount
@@ -1614,6 +1912,19 @@ objShell.MinimizeAll()
                 
                 # บันทึกลง Cut_Stock sheet
                 cut_stock_rows.append([receipt_id, timestamp, item['barcode'], item['name'], item['qty'], current_qty, new_qty])
+                
+                # ตัดสต็อก Campaign sheet ถ้าสินค้านี้เป็นสินค้าแคมเปญ
+                for campaign_key, campaign in self.campaigns_data.items():
+                    if campaign['barcode'] == item['barcode'] and campaign['status'] == 'Active':
+                        try:
+                            # ตัดสต็อกจาก Campaign sheet (column 7 = index 6 = stock)
+                            current_campaign_stock = campaign['stock']
+                            new_campaign_stock = max(0, current_campaign_stock - item['qty'])
+                            self.sheet_campaign.update_cell(campaign['row'], 7, new_campaign_stock)
+                            print(f"✓ ตัด Stock Campaign: {item['name']} จาก {current_campaign_stock} เป็น {new_campaign_stock}")
+                        except Exception as e:
+                            print(f"⚠ ไม่สามารถตัดสต็อก Campaign {item['name']}: {e}")
+                        break
             
             # อัปเดต Cut_Stock sheet
             if cut_stock_rows and hasattr(self, 'sheet_cut_stock') and self.sheet_cut_stock:
@@ -1635,6 +1946,10 @@ objShell.MinimizeAll()
                 'used_coupon': used_coupon,
                 'received_coupon': received_coupon
             }
+            
+            # ลดจำนวนครั้งการใช้โค้ต (ถ้าใช้โค้ตที่จาก Google Sheet)
+            if used_coupon and used_coupon.upper().strip() in self.coupon_database:
+                self.decrement_coupon_usage(used_coupon)
             
             if self.app_running and self.winfo_exists():
                 self.after(0, lambda: self.finish_checkout(received_coupon, payment_method, final_amount, receipt_data))
@@ -2621,6 +2936,15 @@ objShell.MinimizeAll()
         receipt_info_frame = ctk.CTkFrame(right_frame, fg_color="gray25", corner_radius=8)
         receipt_info_frame.pack(fill="x", padx=5, pady=5)
         
+        # เพิ่มข้อมูลลูกค้า
+        self.lbl_receipt_customer = ctk.CTkLabel(receipt_info_frame, text="👤 ลูกค้า: -", 
+                                                  font=("Kanit", 12), text_color="#3498DB")
+        self.lbl_receipt_customer.pack(pady=3, padx=10, anchor="w")
+        
+        self.lbl_receipt_phone = ctk.CTkLabel(receipt_info_frame, text="📱 เบอร์โทร: -", 
+                                              font=("Kanit", 12), text_color="#3498DB")
+        self.lbl_receipt_phone.pack(pady=3, padx=10, anchor="w")
+        
         self.lbl_receipt_coupon_used = ctk.CTkLabel(receipt_info_frame, text="โค้ตที่ใช้: -", 
                                                     font=("Kanit", 12), text_color="#E74C3C")
         self.lbl_receipt_coupon_used.pack(pady=3, padx=10, anchor="w")
@@ -2811,6 +3135,8 @@ objShell.MinimizeAll()
             
             # แสดงข้อมูลใบเสร็จ (โค้ต, ยอดรวม, ส่วนลด, ยอดสุดท้าย)
             data = self.sales_history_data[r_id]
+            customer_name = data.get('customer_name', '-')
+            customer_phone = data.get('customer_phone', '-')
             coupon_used = data.get('coupon_used', '-')
             coupon_received = data.get('coupon_received', '-')
             discount_total = data.get('discount_total', 0.0)
@@ -2821,6 +3147,13 @@ objShell.MinimizeAll()
             vat_rate = 0.07
             base_for_vat = raw_total - discount_total
             vat_amount = base_for_vat * vat_rate
+            
+            # แสดงข้อมูลลูกค้า
+            customer_display = f"👤 ลูกค้า: {customer_name}" if customer_name and customer_name != '-' else "👤 ลูกค้า: -"
+            self.lbl_receipt_customer.configure(text=customer_display)
+            
+            phone_display = f"📱 เบอร์โทร: {customer_phone}" if customer_phone and customer_phone != '-' else "📱 เบอร์โทร: -"
+            self.lbl_receipt_phone.configure(text=phone_display)
             
             # แสดงโค้ตที่ใช้
             coupon_used_display = f"โค้ตที่ใช้: {coupon_used}" if coupon_used != '-' else "โค้ตที่ใช้: ไม่มี"
@@ -2846,7 +3179,7 @@ objShell.MinimizeAll()
                 self.btn_cancel_receipt.configure(state="normal", text="🚫 ยกเลิกใบเสร็จ")
 
     def cancel_receipt(self):
-        """ยกเลิกใบเสร็จและอัปเดต Google Sheet"""
+        """ยกเลิกใบเสร็จและอัปเดต Google Sheet หรือสร้างใบเสร็จ Return"""
         # ตรวจสอบว่า History tab สร้างเรียบร้อยแล้ว
         if not hasattr(self, 'tree_receipts'):
             return
@@ -2869,13 +3202,20 @@ objShell.MinimizeAll()
                 messagebox.showinfo("ยกเลิกแล้ว", f"ใบเสร็จ {r_id} ได้ยกเลิกไปแล้ว")
                 return
             
-            confirm = messagebox.askyesno("ยืนยันการยกเลิก", 
-                                         f"ยืนยันการยกเลิกใบเสร็จ {r_id}?\n\n"
-                                         f"ยอดรวม: {data.get('final_total', 0.0):,.2f} บาท")
+            # สร้าง dialog ให้เลือกประเภทยกเลิก
+            cancel_type = messagebox.askyesnocancel(
+                "เลือกประเภท",
+                f"ยกเลิกใบเสร็จ {r_id}\nยอดรวม: {data.get('final_total', 0.0):,.2f} บาท\n\n"
+                f"Yes = ยกเลิกทั้งใบ (ไม่มีการคืน)\n"
+                f"No = คืนบางรายการ (Return)"
+            )
             
-            if confirm:
-                # อัปเดต Google Sheet
-                threading.Thread(target=self.run_cancel_receipt, args=(r_id,), daemon=True).start()
+            if cancel_type is True:
+                # ยกเลิกทั้งใบ - คืนทั้งหมด
+                threading.Thread(target=self.run_cancel_receipt, args=(r_id, True), daemon=True).start()
+            elif cancel_type is False:
+                # คืนบางรายการ
+                self.show_return_items_dialog(r_id, data)
 
     def reprint_receipt(self):
         """รีปริ้นใบเสร็จที่เลือก หรือสร้างใหม่ถ้าไม่พบไฟล์"""
@@ -2926,21 +3266,32 @@ objShell.MinimizeAll()
             messagebox.showerror("ผิดพลาด", f"เกิดข้อผิดพลาดในการปริ้น: {e}")
 
 
-    def run_cancel_receipt(self, r_id):
-        """ฟังก์ชันสำหรับอัปเดต Google Sheet ในส่วน thread"""
+    def run_cancel_receipt(self, r_id, full_cancel=True):
+        """ฟังก์ชันสำหรับยกเลิกใบเสร็จในส่วน thread
+        
+        Args:
+            r_id: เลขที่ใบเสร็จ
+            full_cancel: True = ยกเลิกทั้งใบ, False = คืนบางรายการ
+        """
         try:
             records = self.sheet_sales.get_all_values()
-            
-            # หาแถวที่มี ReceiptID เท่ากับ r_id และอัปเดต column 15 (Cancel) เป็น "Yes"
-            # Column ใหม่: 1=ReceiptID, 2=Date, 3=CustomerPhone, 4=CustomerName, 5=Barcode, 6=Name, 
-            #             7=Qty, 8=UnitPrice, 9=Total, 10=UsedCoupon, 11=DiscountAmount, 12=PaymentMethod,
-            #             13=ReceivedCoupon, 14=VAT, 15=Cancel
             updated = False
+            
             for row_idx, row in enumerate(records, start=1):  # row_idx เริ่มจาก 1 (header อยู่ที่ 1)
                 if len(row) > 0 and row[0] == r_id:
                     # อัปเดต column 15 = Cancel column
                     self.sheet_sales.update_cell(row_idx, 15, "Yes")  # column 15 = Cancel
                     updated = True
+                    
+                    # ถ้าเป็นการยกเลิกเต็มจำนวน ให้คืนสต็อก
+                    if full_cancel:
+                        try:
+                            barcode = row[4]
+                            qty = int(row[6]) if row[6] else 0
+                            # คืนสต็อก
+                            self.return_stock(barcode, qty)
+                        except:
+                            pass
             
             if updated:
                 # อัปเดตข้อมูลในหน่วยความจำ
@@ -2950,7 +3301,8 @@ objShell.MinimizeAll()
                     # อัปเดต UI ทันที
                     self.after(0, self.update_history_ui)
                     # แสดง message หลังจาก 500ms
-                    self.after(500, lambda: messagebox.showinfo("สำเร็จ", f"ยกเลิกใบเสร็จ {r_id} เรียบร้อยแล้ว"))
+                    status_msg = "ยกเลิกใบเสร็จเรียบร้อยแล้ว" if full_cancel else "คืนสินค้าเรียบร้อยแล้ว"
+                    self.after(500, lambda: messagebox.showinfo("สำเร็จ", f"{status_msg}\n{r_id}"))
                     # รีเฟรชการแสดงผลรายละเอียดหลังปิด dialog
                     self.after(1500, self.refresh_receipt_detail)
             else:
@@ -2961,6 +3313,145 @@ objShell.MinimizeAll()
             print(f"ข้อผิดพลาดในการยกเลิกใบเสร็จ: {e}")
             if self.app_running and self.winfo_exists():
                 self.after(0, lambda: messagebox.showerror("ผิดพลาด", f"เกิดข้อผิดพลาด: {e}"))
+
+    def show_return_items_dialog(self, r_id, receipt_data):
+        """แสดง dialog สำหรับเลือกสินค้าที่ต้องการคืน"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"คืนสินค้า - {r_id}")
+        dialog.geometry("600x500")
+        self.after(100, lambda: self.center_window(dialog))
+        dialog.attributes("-topmost", True)
+        
+        items = receipt_data.get('items', [])
+        selected_items = {}
+        
+        # หัวข้อ
+        ctk.CTkLabel(dialog, text=f"เลือกสินค้าที่ต้องการคืน - {r_id}", 
+                    font=("Kanit", 16, "bold")).pack(pady=10)
+        
+        # Frame สำหรับรายการ
+        items_frame = ctk.CTkScrollableFrame(dialog)
+        items_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # สร้าง checkbox สำหรับแต่ละรายการ
+        for idx, item in enumerate(items):
+            item_var = ctk.BooleanVar(value=False)
+            selected_items[idx] = {
+                'var': item_var,
+                'item': item,
+                'qty_var': ctk.IntVar(value=item.get('qty', 0))
+            }
+            
+            item_frame = ctk.CTkFrame(items_frame, fg_color="gray25", corner_radius=8)
+            item_frame.pack(fill="x", padx=5, pady=5)
+            
+            # Checkbox + ชื่อสินค้า
+            check_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
+            check_frame.pack(fill="x", padx=10, pady=5)
+            
+            ctk.CTkCheckBox(check_frame, text=f"{item['name']}", variable=item_var,
+                           font=("Kanit", 12), width=30).pack(side="left", padx=5)
+            
+            # ราคา
+            ctk.CTkLabel(check_frame, text=f"฿{item['total']:,.2f}", 
+                        font=("Kanit", 11), text_color="#3498DB").pack(side="right", padx=5)
+            
+            # จำนวน
+            qty_frame = ctk.CTkFrame(item_frame, fg_color="transparent")
+            qty_frame.pack(fill="x", padx=10, pady=3)
+            
+            ctk.CTkLabel(qty_frame, text="จำนวน:", font=("Kanit", 11)).pack(side="left", padx=5)
+            ctk.CTkEntry(qty_frame, textvariable=selected_items[idx]['qty_var'], 
+                        width=60, font=("Kanit", 11)).pack(side="left", padx=5)
+        
+        # ปุ่ม
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(fill="x", padx=10, pady=10)
+        
+        def confirm_return():
+            # เก็บรายการที่เลือก
+            return_items = []
+            total_return = 0.0
+            
+            for idx, selected in selected_items.items():
+                if selected['var'].get():
+                    qty_return = selected['qty_var'].get()
+                    if qty_return > 0:
+                        item = selected['item']
+                        return_items.append({
+                            'barcode': item['barcode'],
+                            'name': item['name'],
+                            'qty': qty_return,
+                            'unit_price': item['price'],
+                            'total': qty_return * item['price']
+                        })
+                        total_return += return_items[-1]['total']
+            
+            if not return_items:
+                messagebox.showwarning("ไม่มีรายการ", "กรุณาเลือกสินค้าที่ต้องการคืน")
+                return
+            
+            # ยืนยันการคืน
+            confirm = messagebox.askyesno("ยืนยันการคืน",
+                f"คืนสินค้า {len(return_items)} รายการ\n"
+                f"ยอดรวมการคืน: ฿{total_return:,.2f}\n\n"
+                f"คืนสต็อกโปรแกรมด้วยหรือไม่?")
+            
+            if confirm:
+                dialog.destroy()
+                threading.Thread(target=self.run_return_items, 
+                               args=(r_id, return_items, total_return), 
+                               daemon=True).start()
+        
+        ctk.CTkButton(button_frame, text="✓ ยืนยัน", command=confirm_return,
+                     fg_color="#27AE60", height=40, font=("Kanit", 12, "bold")).pack(side="left", fill="both", expand=True, padx=3)
+        ctk.CTkButton(button_frame, text="✕ ยกเลิก", command=dialog.destroy,
+                     fg_color="#E74C3C", height=40, font=("Kanit", 12, "bold")).pack(side="right", fill="both", expand=True, padx=3)
+
+    def run_return_items(self, r_id, return_items, total_return):
+        """ประมวลผลการคืนสินค้า"""
+        try:
+            # บันทึกการคืน
+            for item in return_items:
+                # คืนสต็อก
+                self.return_stock(item['barcode'], item['qty'])
+            
+            # อัปเดตใบเสร็จว่ามีการคืน
+            if r_id in self.sales_history_data:
+                self.sales_history_data[r_id]['return_amount'] = total_return
+                self.sales_history_data[r_id]['is_partial_return'] = True
+            
+            if self.app_running and self.winfo_exists():
+                self.after(500, lambda: messagebox.showinfo("สำเร็จ", 
+                    f"คืนสินค้า {len(return_items)} รายการสำเร็จแล้ว\n"
+                    f"ยอดรวมการคืน: ฿{total_return:,.2f}\n\n"
+                    f"เลขที่ใบเสร็จ: {r_id}"))
+                self.after(1500, self.update_history_ui)
+                self.after(2000, self.refresh_receipt_detail)
+        
+        except Exception as e:
+            print(f"Error in return_items: {e}")
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: messagebox.showerror("ผิดพลาด", f"เกิดข้อผิดพลาด: {e}"))
+
+    def return_stock(self, barcode, qty):
+        """คืนสต็อกสินค้า"""
+        try:
+            records = self.sheet_products.get_all_values()
+            
+            for row_idx, row in enumerate(records, start=1):
+                if len(row) > 7 and row[1] == barcode:  # row[1] = Barcode (Column B)
+                    current_stock = int(row[7]) if row[7] else 0
+                    new_stock = current_stock + qty
+                    # อัปเดต column 8 = Stock (Column H)
+                    self.sheet_products.update_cell(row_idx, 8, new_stock)
+                    print(f"✓ คืนสต็อก: {row[2]} จำนวน {qty} ชิ้น (เดิม: {current_stock}, ใหม่: {new_stock})")
+                    return True
+        
+        except Exception as e:
+            print(f"Error returning stock: {e}")
+        
+        return False
     
     def refresh_receipt_detail(self):
         """รีเฟรชการแสดงผลรายละเอียดใบเสร็จ"""
@@ -3815,7 +4306,7 @@ objShell.MinimizeAll()
 
             if len(records) > 1:
                 for row in records[1:]:
-                    if len(row) >= 9:
+                    if len(row) >= 11:  # Need at least 11 columns for DiscountAmount
                         full_date = row[1]
                         date_str = full_date.split(" ")[0]  # YYYY-MM-DD
                         
@@ -3834,12 +4325,17 @@ objShell.MinimizeAll()
                         name = row[5]  # Index 5 = Name
                         rec_id = row[0]
                         total_str = row[8]  # Index 8 = Total
+                        discount_str = row[10] if len(row) > 10 else "0"  # Index 10 = DiscountAmount
+                        
                         if total_str != "-" and total_str.strip() != "":
                             try:
-                                amount = float(total_str.replace(",", ""))
-                                total_revenue += amount
+                                total_amount = float(total_str.replace(",", ""))
+                                discount_amount = float(discount_str.replace(",", "")) if discount_str and discount_str.strip() else 0
+                                # คำนวณยอดขายสุดท้าย (หลังลดแล้ว)
+                                final_amount = total_amount - discount_amount
+                                total_revenue += final_amount
                                 total_bills.add(rec_id)
-                                daily_sales[date_key] += amount
+                                daily_sales[date_key] += final_amount
                                 product_sales[name] += 1
                             except: pass
             
@@ -3992,6 +4488,24 @@ objShell.MinimizeAll()
                                    command=lambda: self.show_report_type("profit"), 
                                    font=("Kanit", 12, "bold"), height=40)
         btn_profit.pack(side="left", fill="both", expand=True, padx=3)
+        
+        # ปุ่มส่งออกรายงาน
+        export_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        export_frame.pack(fill="x", padx=5, pady=5)
+        
+        ctk.CTkLabel(export_frame, text="📥 ส่งออกรายงาน:", font=("Kanit", 13, "bold")).pack(side="left", padx=10)
+        
+        ctk.CTkButton(export_frame, text="📊 Daily Sales (Excel)", 
+                     command=lambda: self.export_report_to_excel("daily_sales"),
+                     font=("Kanit", 11, "bold"), height=35, fg_color="#2980B9").pack(side="left", padx=3)
+        
+        ctk.CTkButton(export_frame, text="📦 Products (Excel)", 
+                     command=lambda: self.export_report_to_excel("product_list"),
+                     font=("Kanit", 11, "bold"), height=35, fg_color="#2980B9").pack(side="left", padx=3)
+        
+        ctk.CTkButton(export_frame, text="⚠️ Low Stock (Excel)", 
+                     command=lambda: self.export_report_to_excel("low_stock"),
+                     font=("Kanit", 11, "bold"), height=35, fg_color="#2980B9").pack(side="left", padx=3)
         
         # พื้นที่แสดงผลรายงาน
         report_display_frame = ctk.CTkFrame(main_scroll, fg_color="gray25", corner_radius=10)
@@ -4154,21 +4668,21 @@ objShell.MinimizeAll()
                                       self.report_text.insert("1.0", f"❌ เกิดข้อผิดพลาด: {str(e)}")))
     
     def show_daily_report(self, records):
-        """รายงานยอดขายรายวัน (เฉพาะวันปัจจุบัน) (นับ 1 ใบเสร็จ = 1 ReceiptID)"""
+        """รายงานยอดขายรายวัน (เฉพาะวันปัจจุบัน) (นับ 1 ใบเสร็จ = 1 ReceiptID) - ลดส่วนลดแค่ครั้งเดียวต่อ receipt"""
         try:
             # Get today's date in YYYY-MM-DD format
             today = datetime.now().strftime("%Y-%m-%d")
             
-            # Group by receipt_id for today only
-            today_receipts = set()
-            today_total = 0.0
+            # Group by receipt_id to get unique receipts (don't count discount multiple times per receipt)
+            today_receipts = {}  # {receipt_id: {'total': X, 'discount': Y}}
             
             if len(records) > 1:
                 for row in records[1:]:
-                    safe_row = (row + [""] * 14)[:14]
+                    safe_row = (row + [""] * 15)[:15]
                     receipt_id = safe_row[0]  # column 1 = ReceiptID (index 0)
                     rec_date = safe_row[1]    # column 2 = Date (index 1)
-                    total_str = safe_row[8]   # column 9 = Total (index 8) - เปลี่ยนจาก row[6]
+                    total_str = safe_row[8]   # column 9 = Total (index 8)
+                    discount_str = safe_row[10]  # column 11 = DiscountAmount (index 10)
                     
                     if not rec_date or not receipt_id:
                         continue
@@ -4185,28 +4699,45 @@ objShell.MinimizeAll()
                     except:
                         total = 0.0
                     
-                    today_receipts.add(receipt_id)
-                    today_total += total
+                    try:
+                        discount = float(discount_str) if discount_str else 0.0
+                    except:
+                        discount = 0.0
+                    
+                    # เพิ่ม receipt ลงไป (ถ้ายังไม่มี)
+                    if receipt_id not in today_receipts:
+                        today_receipts[receipt_id] = {'total': total, 'discount': discount}
+                    else:
+                        # ถ้า receipt มีอยู่แล้ว ให้เพิ่มเฉพาะ total (discount นับแค่ครั้งเดียว)
+                        today_receipts[receipt_id]['total'] += total
             
+            # คำนวณรวม
+            today_total = sum(r['total'] for r in today_receipts.values())
+            today_discount = sum(r['discount'] for r in today_receipts.values())
+            
+            # คำนวณยอดขายหลังลดแล้ว
+            today_final = today_total - today_discount
             receipt_count = len(today_receipts)
-            avg_per_receipt = today_total / receipt_count if receipt_count > 0 else 0
+            avg_per_receipt = today_final / receipt_count if receipt_count > 0 else 0
             
             # คำนวณภาษี VAT 7%
             vat_rate = 0.07
-            vat_amount = today_total * vat_rate
-            total_with_vat = today_total + vat_amount
+            vat_amount = today_final * vat_rate
+            total_with_vat = today_final + vat_amount
             
             report_text = f"📅 รายงานยอดขายประจำวัน ({today})\n" + "="*60 + "\n\n"
             
             if today_receipts:
                 report_text += f"📌 ข้อมูลวันนี้\n"
                 report_text += f"   ยอดขาย: {today_total:>12,.2f} บาท\n"
+                report_text += f"   ส่วนลด: {today_discount:>12,.2f} บาท\n"
+                report_text += f"   ยอดสุทธิ: {today_final:>12,.2f} บาท\n"
                 report_text += f"   ภาษี VAT (7%): {vat_amount:>12,.2f} บาท\n"
                 report_text += f"   รวมทั้งสิ้น: {total_with_vat:>12,.2f} บาท\n"
                 report_text += f"   ใบเสร็จ: {receipt_count:>12} ใบ\n"
                 report_text += f"   เฉลี่ย: {avg_per_receipt:>12,.2f} บาท/ใบ\n\n"
                 report_text += "📋 รายการใบเสร็จ:\n"
-                for i, rec_id in enumerate(sorted(today_receipts), 1):
+                for i, rec_id in enumerate(sorted(today_receipts.keys()), 1):
                     report_text += f"  {i}. {rec_id}\n"
             else:
                 report_text += "ไม่มีข้อมูลขายสำหรับวันนี้\n"
@@ -4221,14 +4752,15 @@ objShell.MinimizeAll()
         """รายงานยอดขายรายเดือน (นับ 1 ใบเสร็จ = 1 ReceiptID)"""
         try:
             # Group by (month, receipt_id) to count unique receipts
-            monthly_receipts = defaultdict(lambda: {"receipts": set(), "total": 0.0})
+            monthly_receipts = defaultdict(lambda: {"receipts": set(), "total": 0.0, "discount": 0.0})
             
             if len(records) > 1:
                 for row in records[1:]:
-                    safe_row = (row + [""] * 14)[:14]
+                    safe_row = (row + [""] * 15)[:15]
                     receipt_id = safe_row[0]  # column 1 = ReceiptID (index 0)
                     rec_date = safe_row[1]    # column 2 = Date (index 1)
-                    total_str = safe_row[8]   # column 9 = Total (index 8) - เปลี่ยนจาก row[6]
+                    total_str = safe_row[8]   # column 9 = Total (index 8)
+                    discount_str = safe_row[10]  # column 11 = DiscountAmount (index 10)
                     
                     if not rec_date or not receipt_id:
                         continue
@@ -4241,8 +4773,14 @@ objShell.MinimizeAll()
                     except:
                         total = 0.0
                     
+                    try:
+                        discount = float(discount_str) if discount_str else 0.0
+                    except:
+                        discount = 0.0
+                    
                     monthly_receipts[month_key]["receipts"].add(receipt_id)
                     monthly_receipts[month_key]["total"] += total
+                    monthly_receipts[month_key]["discount"] += discount
             
             # คำนวณภาษี VAT 7%
             vat_rate = 0.07
@@ -4253,11 +4791,14 @@ objShell.MinimizeAll()
                 for month_key in sorted(monthly_receipts.keys(), reverse=True):
                     data = monthly_receipts[month_key]
                     receipt_count = len(data["receipts"])
-                    avg_per_receipt = data['total'] / receipt_count if receipt_count > 0 else 0
-                    month_vat = data['total'] * vat_rate
-                    total_with_vat = data['total'] + month_vat
+                    month_final = data['total'] - data['discount']
+                    avg_per_receipt = month_final / receipt_count if receipt_count > 0 else 0
+                    month_vat = month_final * vat_rate
+                    total_with_vat = month_final + month_vat
                     report_text += f"📌 {month_key}\n"
                     report_text += f"   ยอดขาย: {data['total']:>12,.2f} บาท\n"
+                    report_text += f"   ส่วนลด: {data['discount']:>12,.2f} บาท\n"
+                    report_text += f"   ยอดสุทธิ: {month_final:>12,.2f} บาท\n"
                     report_text += f"   ภาษี VAT (7%): {month_vat:>12,.2f} บาท\n"
                     report_text += f"   รวมทั้งสิ้น: {total_with_vat:>12,.2f} บาท\n"
                     report_text += f"   ใบเสร็จ: {receipt_count:>12} ใบ\n"
@@ -4274,15 +4815,17 @@ objShell.MinimizeAll()
     def show_best_seller_report(self, records):
         """รายงานสินค้าขายดี TOP 20"""
         try:
-            product_sales = defaultdict(lambda: {"qty": 0, "total": 0.0})
+            product_sales = defaultdict(lambda: {"qty": 0, "total": 0.0, "discount": 0.0})
             total_sales = 0.0
+            total_discount = 0.0
             
             if len(records) > 1:
                 for row in records[1:]:
-                    safe_row = (row + [""] * 14)[:14]
-                    name = safe_row[5]  # column 6 = Name (index 5) - เปลี่ยนจาก row[3]
-                    qty_str = safe_row[6]  # column 7 = Qty (index 6) - เปลี่ยนจาก row[4]
-                    total_str = safe_row[8]  # column 9 = Total (index 8) - เปลี่ยนจาก row[6]
+                    safe_row = (row + [""] * 15)[:15]
+                    name = safe_row[5]  # column 6 = Name (index 5)
+                    qty_str = safe_row[6]  # column 7 = Qty (index 6)
+                    total_str = safe_row[8]  # column 9 = Total (index 8)
+                    discount_str = safe_row[10]  # column 11 = DiscountAmount (index 10)
                     
                     if not name:
                         continue
@@ -4297,17 +4840,29 @@ objShell.MinimizeAll()
                     except:
                         total = 0.0
                     
+                    try:
+                        discount = float(discount_str) if discount_str else 0.0
+                    except:
+                        discount = 0.0
+                    
                     product_sales[name]["qty"] += qty
                     product_sales[name]["total"] += total
+                    product_sales[name]["discount"] += discount
                     total_sales += total
+                    total_discount += discount
+            
+            # คำนวณยอดขายสุทธิ
+            total_final = total_sales - total_discount
             
             # คำนวณภาษี VAT 7%
             vat_rate = 0.07
-            vat_amount = total_sales * vat_rate
-            total_with_vat = total_sales + vat_amount
+            vat_amount = total_final * vat_rate
+            total_with_vat = total_final + vat_amount
             
             report_text = "⭐ รายงานสินค้าขายดี TOP 20\n" + "="*60 + "\n\n"
             report_text += f"📊 ยอดขายรวม: {total_sales:,.2f} บาท\n"
+            report_text += f"💳 ส่วนลดรวม: {total_discount:,.2f} บาท\n"
+            report_text += f"📈 ยอดสุทธิ: {total_final:,.2f} บาท\n"
             report_text += f"📋 ภาษี VAT (7%): {vat_amount:,.2f} บาท\n"
             report_text += f"💰 รวมทั้งสิ้น: {total_with_vat:,.2f} บาท\n\n"
             
@@ -4315,8 +4870,9 @@ objShell.MinimizeAll()
             
             if sorted_products:
                 for i, (name, data) in enumerate(sorted_products, 1):
-                    product_vat = data['total'] * vat_rate
-                    report_text += f"{i:2}. {name[:30]:30} - {data['qty']:>6} ชิ้น (ขาย: {data['total']:>10,.2f} + ภาษี: {product_vat:>8,.2f} บาท)\n"
+                    product_final = data['total'] - data['discount']
+                    product_vat = product_final * vat_rate
+                    report_text += f"{i:2}. {name[:30]:30} - {data['qty']:>6} ชิ้น (ขาย: {data['total']:>10,.2f} - ลด: {data['discount']:>8,.2f} = {product_final:>10,.2f} + ภาษี: {product_vat:>8,.2f} บาท)\n"
             else:
                 report_text += "ไม่มีข้อมูล\n"
             
@@ -5076,6 +5632,51 @@ objShell.MinimizeAll()
         )
         self.settings_paper_size.set("58mm")
         self.settings_paper_size.pack(side="left")
+        
+        # ==================== ส่วนที่ 5: Stock Alert ====================
+        stock_alert_frame = ctk.CTkFrame(main_scroll, fg_color="gray20", corner_radius=8)
+        stock_alert_frame.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(stock_alert_frame, text="📦 แจ้งเตือนสต็อก", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # เปิด/ปิด Stock Alert
+        stock_alert_status_frame = ctk.CTkFrame(stock_alert_frame, fg_color="transparent")
+        stock_alert_status_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(stock_alert_status_frame, text="เปิด/ปิดแจ้งเตือน:", font=("Kanit", 12)).pack(side="left", padx=(0, 15))
+        self.settings_stock_alert_enabled = ctk.CTkSwitch(stock_alert_status_frame, text="เปิดแจ้งเตือน", font=("Kanit", 12), onvalue=True, offvalue=False)
+        self.settings_stock_alert_enabled.pack(side="left")
+        
+        # จำนวนสต็อกขั้นต่ำที่จะแจ้งเตือน
+        min_stock_frame = ctk.CTkFrame(stock_alert_frame, fg_color="transparent")
+        min_stock_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(min_stock_frame, text="สต็อกขั้นต่ำ (แจ้งเตือนเมื่อ < ):", font=("Kanit", 12)).pack(side="left", padx=(0, 10))
+        self.settings_minimum_stock = ctk.CTkEntry(min_stock_frame, font=("Kanit", 12), height=30, width=60)
+        self.settings_minimum_stock.pack(side="left", padx=5)
+        self.settings_minimum_stock.insert(0, "5")
+        
+        ctk.CTkLabel(min_stock_frame, text="ชิ้น", font=("Kanit", 12)).pack(side="left", padx=(0, 10))
+        
+        # ปุ่มตรวจสอบสต็อกต่ำ
+        ctk.CTkButton(stock_alert_frame, text="📋 ดูสต็อกต่ำทั้งหมด", command=self.show_low_stock_report, 
+                     font=("Kanit", 12, "bold"), height=35, fg_color="#3498DB").pack(fill="x", padx=15, pady=5)
+        
+        # ==================== ส่วนที่ 6: Coupon Management ====================
+        coupon_frame = ctk.CTkFrame(main_scroll, fg_color="gray20", corner_radius=8)
+        coupon_frame.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(coupon_frame, text="🎟️ จัดการโค้ตส่วนลด", font=("Kanit", 16, "bold"), text_color="#FFD700").pack(anchor="w", padx=15, pady=(10, 5))
+        
+        # ปุ่มจัดการโค้ต
+        coupon_button_frame = ctk.CTkFrame(coupon_frame, fg_color="transparent")
+        coupon_button_frame.pack(fill="x", padx=15, pady=10)
+        
+        ctk.CTkButton(coupon_button_frame, text="➕ เพิ่มโค้ตใหม่", command=self.open_coupon_add_dialog,
+                     font=("Kanit", 12, "bold"), height=35, fg_color="#27AE60").pack(side="left", fill="x", expand=True, padx=3)
+        
+        ctk.CTkButton(coupon_button_frame, text="📝 ดูรายการโค้ต", command=self.open_coupon_list_dialog,
+                     font=("Kanit", 12, "bold"), height=35, fg_color="#2980B9").pack(side="left", fill="x", expand=True, padx=3)
         
         # ==================== ปุ่มบันทึก ====================
         button_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
@@ -6236,7 +6837,8 @@ Barcode: {product_details.get('barcode', '-')}
             if os.path.exists('settings.json'):
                 import json
                 with open('settings.json', 'r', encoding='utf-8') as f:
-                    self.app_settings = json.load(f)
+                    loaded_settings = json.load(f)
+                    self.app_settings.update(loaded_settings)
             else:
                 # ค่าเริ่มต้น
                 self.app_settings = {
@@ -6250,7 +6852,9 @@ Barcode: {product_details.get('barcode', '-')}
                     'promptpay_type': 'เบอร์โทรศัพท์',
                     'promptpay_id': '',
                     'printer_name': self.printer_name,
-                    'paper_size': '58mm'
+                    'paper_size': '58mm',
+                    'stock_alert_enabled': True,
+                    'minimum_stock': 5
                 }
         except Exception as e:
             print(f"Error loading settings: {e}")
@@ -6284,6 +6888,18 @@ Barcode: {product_details.get('barcode', '-')}
             self.settings_promptpay_id.insert(0, self.app_settings.get('promptpay_id', ''))
             
             self.settings_paper_size.set(self.app_settings.get('paper_size', '58mm'))
+            
+            # Stock Alert settings
+            if hasattr(self, 'settings_stock_alert_enabled'):
+                stock_alert_enabled = self.app_settings.get('stock_alert_enabled', True)
+                if stock_alert_enabled:
+                    self.settings_stock_alert_enabled.select()
+                else:
+                    self.settings_stock_alert_enabled.deselect()
+            
+            if hasattr(self, 'settings_minimum_stock'):
+                self.settings_minimum_stock.delete(0, "end")
+                self.settings_minimum_stock.insert(0, str(self.app_settings.get('minimum_stock', 5)))
     
     def save_settings(self):
         """บันทึกการตั้งค่าลงไฟล์ settings.json"""
@@ -6301,7 +6917,9 @@ Barcode: {product_details.get('barcode', '-')}
                 'promptpay_type': self.settings_promptpay_type.get(),
                 'promptpay_id': self.settings_promptpay_id.get(),
                 'printer_name': self.settings_printer_combo.get(),
-                'paper_size': self.settings_paper_size.get()
+                'paper_size': self.settings_paper_size.get(),
+                'stock_alert_enabled': self.settings_stock_alert_enabled.get() if hasattr(self, 'settings_stock_alert_enabled') else True,
+                'minimum_stock': int(self.settings_minimum_stock.get() or 5) if hasattr(self, 'settings_minimum_stock') else 5
             }
             
             # บันทึกลงไฟล์
@@ -6795,6 +7413,89 @@ https://developers.facebook.com/tools/explorer/
         except:
             pass
 
+    def load_app_settings(self):
+        """โหลดการตั้งค่าแอปพลิเคชัน (VAT, Stock Alert, etc.)"""
+        try:
+            if os.path.exists("app_settings.json"):
+                with open("app_settings.json", "r", encoding="utf-8") as f:
+                    settings = json.load(f)
+                    self.app_settings.update(settings)
+        except:
+            pass
+
+    def save_app_settings(self):
+        """บันทึกการตั้งค่าแอปพลิเคชัน"""
+        try:
+            with open("app_settings.json", "w", encoding="utf-8") as f:
+                json.dump(self.app_settings, f, ensure_ascii=False, indent=4)
+        except:
+            pass
+
+    def load_coupon_database(self):
+        """โหลดฐานข้อมูลโค้ตส่วนลดจาก Google Sheet และ JSON"""
+        try:
+            # ลองโหลดจาก Google Sheet ก่อน
+            if hasattr(self, 'sheet_coupon') and self.sheet_coupon:
+                try:
+                    records = self.sheet_coupon.get_all_values()
+                    self.coupon_database = {}
+                    
+                    for row in records[1:]:  # ข้ามหัวตาราง
+                        if len(row) >= 6 and row[0]:
+                            code = row[0].upper().strip()
+                            self.coupon_database[code] = {
+                                'type': row[1],  # 'fixed' or 'percent'
+                                'value': float(row[2]) if row[2] else 0,
+                                'used': int(row[3]) if row[3] else 0,
+                                'limit': int(row[4]) if row[4] else 0,
+                                'created_date': row[5] if len(row) > 5 else datetime.now().strftime("%Y-%m-%d")
+                            }
+                    return
+                except Exception as e:
+                    print(f"⚠ ไม่สามารถโหลด coupon จาก Google Sheet: {e}")
+            
+            # Fallback: โหลดจาก JSON file
+            if os.path.exists("coupon_database.json"):
+                with open("coupon_database.json", "r", encoding="utf-8") as f:
+                    self.coupon_database = json.load(f)
+            else:
+                self.coupon_database = {}
+        except Exception as e:
+            print(f"⚠ Error loading coupon database: {e}")
+            self.coupon_database = {}
+
+    def save_coupon_database(self):
+        """บันทึกฐานข้อมูลโค้ตส่วนลดลง Google Sheet และ JSON"""
+        try:
+            # บันทึกลง JSON
+            with open("coupon_database.json", "w", encoding="utf-8") as f:
+                json.dump(self.coupon_database, f, ensure_ascii=False, indent=4)
+            
+            # บันทึกลง Google Sheet
+            if hasattr(self, 'sheet_coupon') and self.sheet_coupon:
+                try:
+                    # ล้าง sheet เดิม
+                    rows = self.sheet_coupon.get_all_values()
+                    if len(rows) > 1:
+                        # ลบทุกแถว ยกเว้นหัวตาราง
+                        self.sheet_coupon.delete_rows(2, len(rows))
+                    
+                    # เพิ่มข้อมูลใหม่
+                    for code, coupon in self.coupon_database.items():
+                        self.sheet_coupon.append_row([
+                            code,
+                            coupon['type'],
+                            coupon['value'],
+                            coupon.get('used', 0),
+                            coupon.get('limit', 0),
+                            coupon.get('created_date', datetime.now().strftime("%Y-%m-%d"))
+                        ])
+                    print(f"✓ บันทึก coupon ลง Google Sheet เรียบร้อย ({len(self.coupon_database)} รายการ)")
+                except Exception as e:
+                    print(f"⚠ ไม่สามารถบันทึก coupon ลง Google Sheet: {e}")
+        except Exception as e:
+            print(f"⚠ Error saving coupon database: {e}")
+
     def generate_receipt_pdf(self, receipt_id, timestamp, items, total_bill, discount_amount, 
                             final_total, payment_method, used_coupon, received_coupon):
         """สร้างไฟล์ PDF ใบเสร็จด้วย fpdf2 รองรับภาษาไทย
@@ -7003,7 +7704,9 @@ https://developers.facebook.com/tools/explorer/
             pdf.set_font(thai_font, "", 10)
             pdf.cell(0, 4, "ขอบคุณสำหรับการใช้บริการ", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
             
-            
+            pdf.set_font(thai_font, "", 10)
+            pdf.cell(0, 3, f"FACEBOOK : PKN เครื่องเลื้อยไม้ เครื่องตัดหญ้า ราคาถูก", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
+
             pdf.set_font(thai_font, "", 10)
             pdf.cell(0, 3, f"TEL: {shop_phone}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
             
@@ -7160,6 +7863,940 @@ https://developers.facebook.com/tools/explorer/
                 self.lbl_auto_print_status.configure(text="🟢 เปิด", text_color="#27AE60")
             else:
                 self.lbl_auto_print_status.configure(text="⭕ ปิด", text_color="#E74C3C")
+
+    # ========================================
+    # Stock Alert Functions
+    # ========================================
+    def check_stock_alert(self):
+        """ตรวจสอบสินค้าที่มีสต็อกน้อย"""
+        if not self.app_settings.get('stock_alert_enabled', True):
+            return
+        
+        try:
+            records = self.sheet_products.get_all_values()
+            minimum_stock = self.app_settings.get('minimum_stock', 5)
+            low_stock_items = []
+            
+            for row in records[1:]:  # ข้ามหัวตาราง
+                if len(row) >= 8:
+                    try:
+                        name = row[2]  # Column 3: Name
+                        stock = int(row[7])  # Column 8: Stock
+                        if stock < minimum_stock:
+                            low_stock_items.append((name, stock))
+                    except:
+                        pass
+            
+            if low_stock_items:
+                alert_msg = "⚠️ สินค้าสต็อกน้อย:\n\n"
+                for name, stock in low_stock_items[:10]:  # แสดง 10 อันแรก
+                    alert_msg += f"• {name}: {stock} ชิ้น\n"
+                if len(low_stock_items) > 10:
+                    alert_msg += f"\n... และอีก {len(low_stock_items) - 10} รายการ"
+                
+                messagebox.showwarning("แจ้งเตือนสต็อก", alert_msg)
+        except Exception as e:
+            print(f"Error checking stock alert: {e}")
+
+    def show_low_stock_report(self):
+        """แสดงรายงานสินค้าสต็อกต่ำ"""
+        threading.Thread(target=self._run_low_stock_report, daemon=True).start()
+
+    def _run_low_stock_report(self):
+        """แสดงรายงานสินค้าสต็อกต่ำในส่วน thread"""
+        try:
+            records = self.sheet_products.get_all_values()
+            minimum_stock = self.app_settings.get('minimum_stock', 5)
+            low_stock_items = []
+            
+            for row in records[1:]:
+                if len(row) >= 9:
+                    try:
+                        product_id = row[0]
+                        barcode = row[1]
+                        name = row[2]
+                        cost = float(row[6]) if row[6] else 0
+                        stock = int(row[7]) if row[7] else 0
+                        price = float(row[8]) if row[8] else 0
+                        if stock < minimum_stock:
+                            low_stock_items.append({
+                                'id': product_id,
+                                'barcode': barcode,
+                                'name': name,
+                                'cost': cost,
+                                'stock': stock,
+                                'price': price
+                            })
+                    except:
+                        pass
+            
+            # เรียงตามสต็อก (จากน้อยไปมาก)
+            low_stock_items.sort(key=lambda x: x['stock'])
+            
+            if self.app_running and self.winfo_exists():
+                self.after(0, self._show_low_stock_window, low_stock_items)
+        
+        except Exception as e:
+            if self.app_running and self.winfo_exists():
+                self.after(0, lambda: messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถแสดงรายงานได้: {e}"))
+
+    def _show_low_stock_window(self, low_stock_items):
+        """สร้างหน้าต่างแสดงสต็อกต่ำ"""
+        try:
+            # สร้างหน้าต่างแสดงรายงาน
+            report_window = ctk.CTkToplevel(self)
+            report_window.title("รายงานสินค้าสต็อกต่ำ")
+            report_window.geometry("600x700")
+            report_window.attributes("-topmost", True)
+            self.after(100, lambda: self.center_window(report_window))
+            
+            # Header
+            header_frame = ctk.CTkFrame(report_window, fg_color="#E74C3C", corner_radius=0)
+            header_frame.pack(fill="x")
+            ctk.CTkLabel(header_frame, text="📦 รายงานสินค้าสต็อกต่ำ", 
+                        font=("Kanit", 22, "bold"), text_color="white").pack(pady=15)
+            
+            # Scrollable frame for items
+            scroll_frame = ctk.CTkScrollableFrame(report_window, fg_color="transparent")
+            scroll_frame.pack(fill="both", expand=True, padx=15, pady=15)
+            
+            if low_stock_items:
+                for idx, item in enumerate(low_stock_items, 1):
+                    # Item card
+                    card = ctk.CTkFrame(scroll_frame, fg_color="gray30", corner_radius=10)
+                    card.pack(fill="x", pady=10)
+                    
+                    # Item header with number
+                    header = ctk.CTkFrame(card, fg_color="gray35", corner_radius=8)
+                    header.pack(fill="x", padx=10, pady=(10, 0))
+                    
+                    ctk.CTkLabel(header, text=f"#{idx}", font=("Kanit", 14, "bold"), 
+                                text_color="#FF9800", width=50).pack(side="left", padx=10, pady=8)
+                    ctk.CTkLabel(header, text=item['name'][:40], font=("Kanit", 13, "bold")).pack(side="left", fill="x", expand=True, padx=5)
+                    
+                    # Item details grid
+                    details_frame = ctk.CTkFrame(card, fg_color="transparent")
+                    details_frame.pack(fill="x", padx=15, pady=10)
+                    
+                    # Row 1: Barcode
+                    ctk.CTkLabel(details_frame, text="🔖 บาร์โค้ด:", font=("Kanit", 11, "bold"), 
+                                text_color="#95A5A6", width=100).pack(side="left", anchor="w")
+                    ctk.CTkLabel(details_frame, text=item['barcode'], font=("Kanit", 11), 
+                                text_color="white").pack(side="left", padx=5)
+                    
+                    # Row 2: Stock and Price
+                    detail2_frame = ctk.CTkFrame(card, fg_color="transparent")
+                    detail2_frame.pack(fill="x", padx=15, pady=(0, 10))
+                    
+                    stock_color = "#E74C3C" if item['stock'] == 0 else "#F39C12"
+                    ctk.CTkLabel(detail2_frame, text=f"📊 สต็อก:", font=("Kanit", 11, "bold"), 
+                                text_color="#95A5A6", width=100).pack(side="left", anchor="w")
+                    ctk.CTkLabel(detail2_frame, text=f"{item['stock']} ชิ้น", font=("Kanit", 12, "bold"), 
+                                text_color=stock_color).pack(side="left", padx=5)
+                    
+                    ctk.CTkLabel(detail2_frame, text=f"💰 ราคา: ฿{item['price']:,.2f}", 
+                                font=("Kanit", 11), text_color="#2CC985").pack(side="right", padx=5)
+                
+                # Summary
+                summary_frame = ctk.CTkFrame(scroll_frame, fg_color="gray25", corner_radius=10)
+                summary_frame.pack(fill="x", pady=20)
+                ctk.CTkLabel(summary_frame, text=f"📊 รวมทั้งหมด {len(low_stock_items)} รายการ", 
+                           font=("Kanit", 13, "bold"), text_color="#FF9800").pack(pady=12)
+            else:
+                empty_frame = ctk.CTkFrame(scroll_frame, fg_color="transparent")
+                empty_frame.pack(fill="both", expand=True)
+                ctk.CTkLabel(empty_frame, text="✅", font=("Kanit", 60)).pack(pady=20)
+                ctk.CTkLabel(empty_frame, text="สต็อกทั้งหมดเพียงพอ", 
+                           font=("Kanit", 18, "bold"), text_color="#27AE60").pack()
+                ctk.CTkLabel(empty_frame, text="ไม่มีรายการที่ต่ำกว่า 5 ชิ้น", 
+                           font=("Kanit", 13), text_color="#95A5A6").pack(pady=10)
+            
+            # Close button
+            btn_close = ctk.CTkButton(report_window, text="✓ ปิด", command=report_window.destroy,
+                                     font=("Kanit", 14, "bold"), height=40, fg_color="#2CC985")
+            btn_close.pack(fill="x", padx=15, pady=15)
+
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถแสดงรายงานได้: {e}")
+
+    # ========================================
+    # Coupon Management Functions
+    # ========================================
+    def calculate_coupon_discount(self, coupon_code, total_amount):
+        """คำนวณส่วนลดจากโค้ต โดยตรวจสอบจาก Google Sheet Coupon"""
+        coupon_code = coupon_code.upper().strip()
+        
+        # ตรวจสอบจาก Database ในหน่วยความจำ
+        if coupon_code not in self.coupon_database:
+            return None, "โค้ตไม่ถูกต้อง"
+        
+        coupon = self.coupon_database[coupon_code]
+        
+        # ตรวจสอบว่าโค้ตใช้ครบแล้วหรือไม่ (Limit > 0 และ Used >= Limit = ใช้ไม่ได้)
+        limit = coupon.get('limit', 0)
+        used = coupon.get('used', 0)
+        
+        if limit > 0 and used >= limit:
+            return None, f"โค้ตนี้ใช้ครบแล้ว ({used}/{limit} ครั้ง)"
+        
+        if used > 0 and limit == 0:
+            # Limit = 0 หมายถึง unlimited
+            pass
+        
+        # ตรวจสอบประเภทโค้ต (Fixed หรือ Percent)
+        coupon_type = coupon.get('type', 'percent').lower()
+        value = coupon.get('value', 0)
+        
+        try:
+            if coupon_type == 'fixed':
+                # Fixed amount discount
+                discount = min(float(value), total_amount)  # ไม่ลดมากกว่ายอดรวม
+            elif coupon_type == 'percent':
+                # Percent discount
+                discount = total_amount * (float(value) / 100)
+            else:
+                return None, "ประเภทโค้ตไม่ถูกต้อง"
+            
+            return discount, None
+        
+        except Exception as e:
+            return None, f"ข้อผิดพลาดในการคำนวณส่วนลด: {str(e)}"
+
+    def decrement_coupon_usage(self, coupon_code):
+        """ลดจำนวนครั้งการใช้โค้ต 1 ครั้ง"""
+        coupon_code = coupon_code.upper().strip()
+        
+        try:
+            if coupon_code not in self.coupon_database:
+                return False, "โค้ตไม่พบในฐานข้อมูล"
+            
+            coupon = self.coupon_database[coupon_code]
+            coupon['used'] = coupon.get('used', 0) + 1
+            
+            # บันทึกลง Google Sheet
+            if hasattr(self, 'sheet_coupon') and self.sheet_coupon:
+                try:
+                    records = self.sheet_coupon.get_all_values()
+                    for i, row in enumerate(records, start=1):
+                        if len(row) >= 1 and row[0].upper() == coupon_code:
+                            # อัปเดตคอลัมน์ "Used" (คอลัมน์ที่ 4)
+                            self.sheet_coupon.update_cell(i, 4, coupon['used'])
+                            print(f"✓ อัปเดตการใช้โค้ต {coupon_code}: {coupon['used']} ครั้ง")
+                            break
+                except Exception as e:
+                    print(f"⚠ ไม่สามารถอัปเดต coupon usage ใน Google Sheet: {e}")
+            
+            # บันทึกลง JSON
+            self.save_coupon_database()
+            return True, "อัปเดตการใช้โค้ตเรียบร้อย"
+        
+        except Exception as e:
+            print(f"⚠ Error decrementing coupon usage: {e}")
+            return False, f"ข้อผิดพลาด: {str(e)}"
+
+    def add_coupon(self, code, coupon_type, value, limit=0):
+        """เพิ่มโค้ตใหม่"""
+        code = code.upper().strip()
+        if code in self.coupon_database:
+            return False, "โค้ตนี้มีอยู่แล้ว"
+        
+        self.coupon_database[code] = {
+            'type': coupon_type,  # 'fixed' หรือ 'percent'
+            'value': value,
+            'used': 0,
+            'limit': limit,
+            'created_date': datetime.now().strftime("%Y-%m-%d")
+        }
+        self.save_coupon_database()
+        return True, "เพิ่มโค้ตสำเร็จ"
+
+    def delete_coupon(self, code):
+        """ลบโค้ต"""
+        code = code.upper().strip()
+        if code not in self.coupon_database:
+            return False, "ไม่พบโค้ตนี้"
+        
+        del self.coupon_database[code]
+        self.save_coupon_database()
+        return True, "ลบโค้ตสำเร็จ"
+
+    def increment_coupon_usage(self, code):
+        """เพิ่มจำนวนการใช้งานโค้ต"""
+        code = code.upper().strip()
+        if code in self.coupon_database:
+            self.coupon_database[code]['used'] = self.coupon_database[code].get('used', 0) + 1
+            self.save_coupon_database()
+
+    def open_coupon_add_dialog(self):
+        """เปิด dialog สำหรับเพิ่มโค้ตใหม่"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("เพิ่มโค้ตส่วนลด")
+        dialog.geometry("500x500")
+        self.after(100, lambda: self.center_window(dialog))
+        dialog.attributes("-topmost", True)
+        
+        # หัวข้อ
+        ctk.CTkLabel(dialog, text="🎟️ เพิ่มโค้ตส่วนลดใหม่", 
+                    font=("Kanit", 16, "bold")).pack(pady=15)
+        
+        # Form frame
+        form_frame = ctk.CTkFrame(dialog, fg_color="gray25", corner_radius=8)
+        form_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        # รหัสโค้ต
+        ctk.CTkLabel(form_frame, text="รหัสโค้ต:", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(15, 3))
+        coupon_code = ctk.CTkEntry(form_frame, placeholder_text="เช่น NEW2024", font=("Kanit", 12), height=35)
+        coupon_code.pack(fill="x", padx=15, pady=5)
+        
+        # ประเภท
+        ctk.CTkLabel(form_frame, text="ประเภทส่วนลด:", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(10, 3))
+        coupon_type_var = ctk.StringVar(value="fixed")
+        
+        type_frame = ctk.CTkFrame(form_frame, fg_color="transparent")
+        type_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkRadioButton(type_frame, text="จำนวนคงที่ (บาท)", variable=coupon_type_var, value="fixed",
+                          font=("Kanit", 11)).pack(side="left", padx=5)
+        ctk.CTkRadioButton(type_frame, text="เปอร์เซนต์ (%)", variable=coupon_type_var, value="percent",
+                          font=("Kanit", 11)).pack(side="left", padx=5)
+        
+        # ค่าส่วนลด
+        ctk.CTkLabel(form_frame, text="ค่าส่วนลด:", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(10, 3))
+        coupon_value = ctk.CTkEntry(form_frame, placeholder_text="100", font=("Kanit", 12), height=35)
+        coupon_value.pack(fill="x", padx=15, pady=5)
+        
+        # ข้อจำกัด (ไม่บังคับ)
+        ctk.CTkLabel(form_frame, text="จำนวนครั้งที่ใช้ได้ (0 = ไม่จำกัด):", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(10, 3))
+        coupon_limit = ctk.CTkEntry(form_frame, placeholder_text="10", font=("Kanit", 12), height=35)
+        coupon_limit.pack(fill="x", padx=15, pady=5)
+        
+        # ปุ่ม
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(fill="x", padx=20, pady=15)
+        
+        def save_coupon():
+            code = coupon_code.get().strip()
+            if not code:
+                messagebox.showwarning("ข้อมูลไม่สมบูรณ์", "กรุณาใส่รหัสโค้ต")
+                return
+            
+            try:
+                value = float(coupon_value.get())
+                limit = int(coupon_limit.get()) if coupon_limit.get() else 0
+            except ValueError:
+                messagebox.showerror("ข้อมูลไม่ถูกต้อง", "ค่าส่วนลดและจำนวนครั้งต้องเป็นตัวเลข")
+                return
+            
+            success, msg = self.add_coupon(code, coupon_type_var.get(), value, limit)
+            if success:
+                # ปิด dialog ก่อน แล้วจึงแสดง message box
+                dialog.destroy()
+                self.after(100, lambda: messagebox.showinfo("สำเร็จ", f"เพิ่มโค้ต {code} เรียบร้อยแล้ว"))
+            else:
+                messagebox.showerror("ผิดพลาด", msg)
+        
+        ctk.CTkButton(button_frame, text="✓ บันทึก", command=save_coupon,
+                     fg_color="#27AE60", height=40, font=("Kanit", 12, "bold")).pack(side="left", fill="both", expand=True, padx=3)
+        ctk.CTkButton(button_frame, text="✕ ยกเลิก", command=dialog.destroy,
+                     fg_color="#E74C3C", height=40, font=("Kanit", 12, "bold")).pack(side="right", fill="both", expand=True, padx=3)
+
+    def open_coupon_list_dialog(self):
+        """เปิด dialog สำหรับดูและจัดการโค้ต"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("จัดการโค้ตส่วนลด")
+        dialog.geometry("700x500")
+        self.after(100, lambda: self.center_window(dialog))
+        dialog.attributes("-topmost", True)
+        
+        # หัวข้อ
+        ctk.CTkLabel(dialog, text="🎟️ รายการโค้ตส่วนลด", 
+                    font=("Kanit", 16, "bold")).pack(pady=10)
+        
+        # ตาราง
+        columns = ("รหัสโค้ต", "ประเภท", "ค่าส่วนลด", "ใช้ไปแล้ว", "จำนวน ครั้ง")
+        tree = ttk.Treeview(dialog, columns=columns, show="headings", height=15)
+        tree.heading("รหัสโค้ต", text="รหัสโค้ต")
+        tree.heading("ประเภท", text="ประเภท")
+        tree.heading("ค่าส่วนลด", text="ค่าส่วนลด")
+        tree.heading("ใช้ไปแล้ว", text="ใช้ไปแล้ว")
+        tree.heading("จำนวน ครั้ง", text="จำนวนครั้ง")
+        tree.column("รหัสโค้ต", width=120)
+        tree.column("ประเภท", width=100, anchor="center")
+        tree.column("ค่าส่วนลด", width=100, anchor="e")
+        tree.column("ใช้ไปแล้ว", width=80, anchor="center")
+        tree.column("จำนวน ครั้ง", width=100, anchor="center")
+        
+        # โหลดข้อมูล
+        for code, coupon in self.coupon_database.items():
+            coupon_type = "คงที่" if coupon['type'] == 'fixed' else "เปอร์เซนต์"
+            value = f"฿{coupon['value']}" if coupon['type'] == 'fixed' else f"{coupon['value']}%"
+            used = coupon.get('used', 0)
+            limit = coupon.get('limit', 0)
+            limit_text = "ไม่จำกัด" if limit == 0 else f"{used}/{limit}"
+            
+            tree.insert("", "end", values=(code, coupon_type, value, used, limit_text))
+        
+        tree.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # ปุ่ม
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(fill="x", padx=10, pady=10)
+        
+        def delete_selected():
+            selected = tree.selection()
+            if not selected:
+                messagebox.showwarning("เลือกโค้ต", "กรุณาเลือกโค้ตที่ต้องการลบ")
+                return
+            
+            code = tree.item(selected[0])['values'][0]
+            if messagebox.askyesno("ยืนยันการลบ", f"ลบโค้ต {code}?"):
+                self.delete_coupon(code)
+                tree.delete(selected[0])
+                messagebox.showinfo("สำเร็จ", "ลบโค้ตเรียบร้อยแล้ว")
+        
+        ctk.CTkButton(button_frame, text="🗑️ ลบโค้ด", command=delete_selected,
+                     fg_color="#E74C3C", height=35, font=("Kanit", 11, "bold")).pack(side="left", fill="x", expand=True, padx=3)
+        ctk.CTkButton(button_frame, text="✕ ปิด", command=dialog.destroy,
+                     fg_color="#95A5A6", height=35, font=("Kanit", 11, "bold")).pack(side="right", fill="x", expand=True, padx=3)
+
+    # ========================================
+    # Export to Excel Functions
+    # ========================================
+    def export_report_to_excel(self, report_type, start_date=None, end_date=None):
+        """ส่งออกรายงานเป็น Excel file"""
+        try:
+            # ตรวจสอบว่า openpyxl ติดตั้งแล้ว
+            try:
+                from openpyxl import Workbook
+                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            except ImportError:
+                messagebox.showerror("ข้อผิดพลาด", "ต้องติดตั้ง openpyxl\nรัน: pip install openpyxl")
+                return
+
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+            wb = Workbook()
+            ws = wb.active
+            
+            if report_type == "daily_sales":
+                self._export_daily_sales(ws)
+            elif report_type == "product_list":
+                self._export_product_list(ws)
+            elif report_type == "low_stock":
+                self._export_low_stock(ws)
+            
+            # สร้างโฟลเดอร์ Report ถ้ายังไม่มี
+            report_folder = os.path.join(os.getcwd(), "Report")
+            if not os.path.exists(report_folder):
+                os.makedirs(report_folder)
+            
+            # บันทึกไฟล์ในโฟลเดอร์ Report
+            filename = f"Report_{report_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            filepath = os.path.join(report_folder, filename)
+            wb.save(filepath)
+            
+            messagebox.showinfo("สำเร็จ", f"บันทึกไฟล์สำเร็จ:\n{filepath}")
+            
+            # เปิดไฟล์
+            if os.path.exists(filepath):
+                os.startfile(filepath)
+        
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถส่งออกรายงานได้:\n{e}")
+
+    def _export_daily_sales(self, ws):
+        """ส่งออกรายงานยอดขายรายวัน"""
+        from openpyxl.styles import Font, PatternFill, Alignment
+        
+        ws.title = "Daily Sales"
+        
+        # หัวตาราง
+        headers = ["เลขที่ใบเสร็จ", "วันที่", "สินค้า", "จำนวน", "ราคา/หน่วย", "รวม", "การจ่าย", "โค้ต", "VAT"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True, size=12)
+            cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+            cell.font = Font(bold=True, color="FFFFFF")
+        
+        # ดึงข้อมูล
+        records = self.sheet_sales.get_all_values()
+        row_num = 2
+        
+        for row in records[1:]:
+            if len(row) >= 9:
+                try:
+                    ws.cell(row=row_num, column=1, value=row[0])  # ReceiptID
+                    ws.cell(row=row_num, column=2, value=row[1])  # Date
+                    ws.cell(row=row_num, column=3, value=row[5])  # Name
+                    ws.cell(row=row_num, column=4, value=row[6])  # Qty
+                    ws.cell(row=row_num, column=5, value=row[7])  # Price
+                    ws.cell(row=row_num, column=6, value=row[8])  # Total
+                    ws.cell(row=row_num, column=7, value=row[11])  # PaymentMethod
+                    ws.cell(row=row_num, column=8, value=row[9])  # UsedCoupon
+                    ws.cell(row=row_num, column=9, value=row[13])  # VAT
+                    row_num += 1
+                except:
+                    pass
+        
+        # ปรับความกว้างคอลัมน์
+        for col in range(1, 10):
+            ws.column_dimensions[chr(64 + col)].width = 18
+
+    def _export_product_list(self, ws):
+        """ส่งออกรายการสินค้า"""
+        from openpyxl.styles import Font, PatternFill, Alignment
+        
+        ws.title = "Products"
+        
+        # หัวตาราง
+        headers = ["ID", "Barcode", "ชื่อสินค้า", "ยี่ห้อ", "รุ่นรถ", "รายละเอียด", "ราคาทุน", "สต็อก", "ราคาขาย"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True, size=12, color="FFFFFF")
+            cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        
+        # ดึงข้อมูล
+        records = self.sheet_products.get_all_values()
+        row_num = 2
+        
+        for row in records[1:]:
+            if len(row) >= 9:
+                for col, value in enumerate(row[:9], 1):
+                    ws.cell(row=row_num, column=col, value=value)
+                row_num += 1
+        
+        # ปรับความกว้างคอลัมน์
+        for col in range(1, 10):
+            ws.column_dimensions[chr(64 + col)].width = 18
+
+    def _export_low_stock(self, ws):
+        """ส่งออกรายการสินค้าสต็อกต่ำ"""
+        from openpyxl.styles import Font, PatternFill
+        
+        ws.title = "Low Stock"
+        
+        # หัวตาราง
+        headers = ["ชื่อสินค้า", "Barcode", "สต็อก", "ราคา", "ยอดค่าสต็อก (ต่ำสุด)"]
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True, size=12, color="FFFFFF")
+            cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+        
+        # ดึงข้อมูลสต็อกต่ำ
+        records = self.sheet_products.get_all_values()
+        minimum_stock = self.app_settings.get('minimum_stock', 5)
+        row_num = 2
+        
+        for row in records[1:]:
+            if len(row) >= 9:
+                try:
+                    stock = int(row[7])
+                    if stock < minimum_stock:
+                        ws.cell(row=row_num, column=1, value=row[2])  # Name
+                        ws.cell(row=row_num, column=2, value=row[1])  # Barcode
+                        ws.cell(row=row_num, column=3, value=stock)  # Stock
+                        ws.cell(row=row_num, column=4, value=row[8])  # Price
+                        try:
+                            cost = float(row[6]) if row[6] else 0
+                            ws.cell(row=row_num, column=5, value=f"฿{cost * stock:,.2f}")
+                        except:
+                            pass
+                        row_num += 1
+                except:
+                    pass
+        
+        # ปรับความกว้างคอลัมน์
+        for col in range(1, 6):
+            ws.column_dimensions[chr(64 + col)].width = 18
+
+    # ========================================
+    # Campaign / Sale Management
+    # ========================================
+    def setup_campaign_tab(self):
+        """สร้าง UI สำหรับจัดการแคมเปญ Sale"""
+        # Toolbar
+        toolbar = ctk.CTkFrame(self.tab_campaign, fg_color="gray25")
+        toolbar.pack(fill="x", padx=5, pady=5)
+        
+        ctk.CTkButton(toolbar, text="➕ เพิ่มแคมเปญใหม่", command=self.show_add_campaign_dialog,
+                     font=("Kanit", 11, "bold"), fg_color="#2E7D32").pack(side="left", padx=2)
+        
+        ctk.CTkButton(toolbar, text="✎ แก้ไข", command=self.edit_selected_campaign,
+                     font=("Kanit", 11, "bold"), fg_color="#1976D2").pack(side="left", padx=2)
+        
+        ctk.CTkButton(toolbar, text="🗑️ ลบ", command=self.delete_selected_campaign,
+                     font=("Kanit", 11, "bold"), fg_color="#D32F2F").pack(side="left", padx=2)
+        
+        ctk.CTkButton(toolbar, text="📋 ตรวจสอบแคมเปญ", command=self.check_campaigns,
+                     font=("Kanit", 11, "bold"), fg_color="#F57C00").pack(side="left", padx=2)
+        
+        ctk.CTkButton(toolbar, text="🔄 รีเฟรช", command=self.load_campaigns_data,
+                     font=("Kanit", 11, "bold")).pack(side="left", padx=2)
+        
+        # Table
+        columns = ("แคมเปญ", "Barcode", "ราคาเต็ม", "ราคาลด", "ลดถึง", "จำนวน", "สต็อก", "สถานะ")
+        self.campaign_tree = ttk.Treeview(self.tab_campaign, columns=columns, show="headings", height=20)
+        
+        self.campaign_tree.heading("แคมเปญ", text="แคมเปญ")
+        self.campaign_tree.heading("Barcode", text="Barcode")
+        self.campaign_tree.heading("ราคาเต็ม", text="ราคาเต็ม")
+        self.campaign_tree.heading("ราคาลด", text="ราคาลด")
+        self.campaign_tree.heading("ลดถึง", text="ลดถึง")
+        self.campaign_tree.heading("จำนวน", text="จำนวน")
+        self.campaign_tree.heading("สต็อก", text="สต็อก")
+        self.campaign_tree.heading("สถานะ", text="สถานะ")
+        
+        self.campaign_tree.column("แคมเปญ", width=150, anchor="center")
+        self.campaign_tree.column("Barcode", width=100, anchor="center")
+        self.campaign_tree.column("ราคาเต็ม", width=80, anchor="center")
+        self.campaign_tree.column("ราคาลด", width=80, anchor="center")
+        self.campaign_tree.column("ลดถึง", width=100, anchor="center")
+        self.campaign_tree.column("จำนวน", width=70, anchor="center")
+        self.campaign_tree.column("สต็อก", width=70, anchor="center")
+        self.campaign_tree.column("สถานะ", width=80, anchor="center")
+        
+        # Bind double-click to toggle campaign status
+        self.campaign_tree.bind("<Double-1>", self.toggle_campaign_status)
+        
+        self.campaign_tree.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # เก็บข้อมูลแคมเปญในหน่วยความจำ
+        self.campaigns_data = {}
+        self.load_campaigns_data()
+    
+    def toggle_campaign_status(self, event):
+        """สลับสถานะแคมเปญ (Active ↔ Inactive) - Double-click on status column"""
+        selection = self.campaign_tree.selection()
+        if not selection:
+            return
+        
+        selected_id = selection[0]
+        campaign = self.campaigns_data.get(selected_id)
+        if not campaign:
+            return
+        
+        try:
+            row_num = campaign['row']
+            current_status = campaign['status']
+            new_status = "Inactive" if current_status == "Active" else "Active"
+            
+            # อัปเดตใน Google Sheet (column 9 = Status)
+            self.sheet_campaign.update_cell(row_num, 9, new_status)
+            
+            # อัปเดตใน memory
+            campaign['status'] = new_status
+            
+            # รีเฟรชตาราง
+            self.load_campaigns_data()
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถสลับสถานะแคมเปญ: {e}")
+
+    def load_campaigns_data(self):
+        """โหลดข้อมูลแคมเปญจาก Google Sheet"""
+        try:
+            # ล้างข้อมูลในตาราง
+            for item in self.campaign_tree.get_children():
+                self.campaign_tree.delete(item)
+            
+            if not self.sheet_campaign:
+                messagebox.showwarning("ข้อผิดพลาด", "ไม่สามารถเชื่อมต่อ Campaign sheet")
+                return
+            
+            records = self.sheet_campaign.get_all_values()
+            self.campaigns_data = {}
+            
+            for i, row in enumerate(records[1:], start=2):  # ข้ามแถวแรก (header)
+                if len(row) >= 8:
+                    try:
+                        campaign_name = row[0]
+                        barcode = row[1]
+                        full_price = float(row[2]) if row[2] else 0
+                        discount_price = float(row[3]) if row[3] else 0
+                        discount_until = row[4]
+                        quantity = int(row[5]) if row[5] else 0
+                        stock = int(row[6]) if row[6] else 0
+                        status = row[8] if len(row) > 8 else "Active"
+                        
+                        # เก็บข้อมูลพร้อม row number
+                        key = f"{barcode}_{campaign_name}"
+                        self.campaigns_data[key] = {
+                            'row': i,
+                            'name': campaign_name,
+                            'barcode': barcode,
+                            'full_price': full_price,
+                            'discount_price': discount_price,
+                            'discount_until': discount_until,
+                            'quantity': quantity,
+                            'stock': stock,
+                            'status': status
+                        }
+                        
+                        # แสดงในตาราง
+                        discount_pct = ((full_price - discount_price) / full_price * 100) if full_price > 0 else 0
+                        self.campaign_tree.insert("", "end", iid=key, values=(
+                            campaign_name,
+                            barcode,
+                            f"฿{full_price:,.2f}",
+                            f"฿{discount_price:,.2f} ({discount_pct:.0f}%)",
+                            discount_until,
+                            quantity,
+                            stock,
+                            "✅ Active" if status == "Active" else "⏸️ Inactive"
+                        ))
+                    except Exception as e:
+                        print(f"Error parsing campaign row: {e}")
+                        pass
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถโหลดข้อมูลแคมเปญ: {e}")
+
+    def show_add_campaign_dialog(self):
+        """แสดงหน้าต่างเพิ่มแคมเปญใหม่"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("เพิ่มแคมเปญ Sale ใหม่")
+        dialog.geometry("500x600")
+        dialog.transient(self)
+        self.after(100, lambda: self.center_window(dialog))
+        
+        # Campaign Name
+        ctk.CTkLabel(dialog, text="ชื่อแคมเปญ *", font=("Kanit", 12, "bold")).pack(pady=(15, 5), padx=15, anchor="w")
+        campaign_name_entry = ctk.CTkEntry(dialog, font=("Kanit", 11), placeholder_text="เช่น Flash Sale 50%")
+        campaign_name_entry.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Barcode
+        ctk.CTkLabel(dialog, text="Barcode สินค้า *", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
+        barcode_entry = ctk.CTkEntry(dialog, font=("Kanit", 11), placeholder_text="สแกน barcode")
+        barcode_entry.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Full Price
+        ctk.CTkLabel(dialog, text="ราคาเต็ม *", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
+        full_price_entry = ctk.CTkEntry(dialog, font=("Kanit", 11), placeholder_text="0.00")
+        full_price_entry.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Discount Price
+        ctk.CTkLabel(dialog, text="ราคาลด *", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
+        discount_price_entry = ctk.CTkEntry(dialog, font=("Kanit", 11), placeholder_text="0.00")
+        discount_price_entry.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Discount Until Date
+        ctk.CTkLabel(dialog, text="ลดถึงวันที่ *", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
+        date_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        date_frame.pack(fill="x", padx=15, pady=(0, 10))
+        try:
+            from tkcalendar import DateEntry as CalendarDateEntry
+            discount_until_entry = CalendarDateEntry(date_frame, font=("Kanit", 11), width=20, year=datetime.now().year, month=datetime.now().month, day=datetime.now().day)
+        except:
+            # Fallback ถ้าไม่มี tkcalendar
+            discount_until_entry = DateEntry(date_frame, font=("Kanit", 11), width=20)
+        discount_until_entry.pack(side="left", fill="x", expand=True)
+        
+        # Quantity
+        ctk.CTkLabel(dialog, text="จำนวนชิ้น *", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
+        quantity_entry = ctk.CTkEntry(dialog, font=("Kanit", 11), placeholder_text="1")
+        quantity_entry.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Buttons
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(fill="x", padx=15, pady=20)
+        
+        def save_campaign():
+            try:
+                campaign_name = campaign_name_entry.get().strip()
+                barcode = barcode_entry.get().strip()
+                full_price = float(full_price_entry.get())
+                discount_price = float(discount_price_entry.get())
+                discount_until = discount_until_entry.get_date().strftime("%Y-%m-%d")
+                quantity = int(quantity_entry.get())
+                
+                if not campaign_name or not barcode:
+                    messagebox.showwarning("ข้อผิดพลาด", "กรุณากรอกข้อมูลให้ครบถ้วน")
+                    return
+                
+                if discount_price >= full_price:
+                    messagebox.showwarning("ข้อผิดพลาด", "ราคาลดต้องน้อยกว่าราคาเต็ม")
+                    return
+                
+                # บันทึกลง Google Sheet
+                created_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.sheet_campaign.append_row([
+                    campaign_name,
+                    barcode,
+                    full_price,
+                    discount_price,
+                    discount_until,
+                    quantity,
+                    quantity,  # สต็อกเริ่มต้นเท่ากับจำนวน
+                    created_date,
+                    "Active"
+                ])
+                
+                dialog.destroy()
+                self.load_campaigns_data()
+                self.after(100, lambda: messagebox.showinfo("สำเร็จ", f"เพิ่มแคมเปญ '{campaign_name}' เรียบร้อย"))
+                
+            except ValueError:
+                messagebox.showerror("ข้อผิดพลาด", "กรุณากรอกราคา และจำนวนเป็นตัวเลข")
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถบันทึกแคมเปญ: {e}")
+        
+        ctk.CTkButton(button_frame, text="✓ บันทึก", command=save_campaign,
+                     fg_color="#2E7D32", font=("Kanit", 12, "bold")).pack(side="left", padx=5, fill="x", expand=True)
+        ctk.CTkButton(button_frame, text="✕ ยกเลิก", command=dialog.destroy,
+                     fg_color="#D32F2F", font=("Kanit", 12, "bold")).pack(side="left", padx=5, fill="x", expand=True)
+
+    def edit_selected_campaign(self):
+        """แก้ไขแคมเปญที่เลือก"""
+        selection = self.campaign_tree.selection()
+        if not selection:
+            messagebox.showwarning("เลือกแคมเปญ", "กรุณาเลือกแคมเปญที่ต้องการแก้ไข")
+            return
+        
+        selected_id = selection[0]
+        campaign = self.campaigns_data.get(selected_id)
+        if not campaign:
+            return
+        
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("แก้ไขแคมเปญ")
+        dialog.geometry("500x600")
+        dialog.transient(self)
+        self.after(100, lambda: self.center_window(dialog))
+        
+        # Campaign Name
+        ctk.CTkLabel(dialog, text="ชื่อแคมเปญ", font=("Kanit", 12, "bold")).pack(pady=(15, 5), padx=15, anchor="w")
+        campaign_name_entry = ctk.CTkEntry(dialog, font=("Kanit", 11))
+        campaign_name_entry.insert(0, campaign['name'])
+        campaign_name_entry.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Barcode
+        ctk.CTkLabel(dialog, text="Barcode", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
+        barcode_entry = ctk.CTkEntry(dialog, font=("Kanit", 11))
+        barcode_entry.insert(0, campaign['barcode'])
+        barcode_entry.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # Prices
+        price_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        price_frame.pack(fill="x", padx=15, pady=(10, 10))
+        
+        ctk.CTkLabel(price_frame, text="ราคาเต็ม", font=("Kanit", 11, "bold")).pack(side="left", padx=(0, 10))
+        full_price_entry = ctk.CTkEntry(price_frame, font=("Kanit", 11), width=120)
+        full_price_entry.insert(0, str(campaign['full_price']))
+        full_price_entry.pack(side="left", padx=(0, 20))
+        
+        ctk.CTkLabel(price_frame, text="ราคาลด", font=("Kanit", 11, "bold")).pack(side="left", padx=(0, 10))
+        discount_price_entry = ctk.CTkEntry(price_frame, font=("Kanit", 11), width=120)
+        discount_price_entry.insert(0, str(campaign['discount_price']))
+        discount_price_entry.pack(side="left")
+        
+        # Stock
+        stock_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        stock_frame.pack(fill="x", padx=15, pady=(10, 10))
+        
+        ctk.CTkLabel(stock_frame, text="สต็อก", font=("Kanit", 11, "bold")).pack(side="left", padx=(0, 10))
+        stock_entry = ctk.CTkEntry(stock_frame, font=("Kanit", 11), width=100)
+        stock_entry.insert(0, str(campaign['stock']))
+        stock_entry.pack(side="left")
+        
+        # Buttons
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(fill="x", padx=15, pady=20)
+        
+        def update_campaign():
+            try:
+                row_num = campaign['row']
+                self.sheet_campaign.update_cell(row_num, 1, campaign_name_entry.get())
+                self.sheet_campaign.update_cell(row_num, 3, float(full_price_entry.get()))
+                self.sheet_campaign.update_cell(row_num, 4, float(discount_price_entry.get()))
+                self.sheet_campaign.update_cell(row_num, 7, int(stock_entry.get()))
+                
+                dialog.destroy()
+                self.load_campaigns_data()
+                self.after(100, lambda: messagebox.showinfo("สำเร็จ", "อัปเดตแคมเปญเรียบร้อย"))
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถอัปเดตแคมเปญ: {e}")
+        
+        ctk.CTkButton(button_frame, text="✓ บันทึก", command=update_campaign,
+                     fg_color="#2E7D32", font=("Kanit", 12, "bold")).pack(side="left", padx=5, fill="x", expand=True)
+        ctk.CTkButton(button_frame, text="✕ ยกเลิก", command=dialog.destroy,
+                     fg_color="#D32F2F", font=("Kanit", 12, "bold")).pack(side="left", padx=5, fill="x", expand=True)
+
+    def delete_selected_campaign(self):
+        """ลบแคมเปญที่เลือก"""
+        selection = self.campaign_tree.selection()
+        if not selection:
+            messagebox.showwarning("เลือกแคมเปญ", "กรุณาเลือกแคมเปญที่ต้องการลบ")
+            return
+        
+        selected_id = selection[0]
+        campaign = self.campaigns_data.get(selected_id)
+        if not campaign:
+            return
+        
+        if messagebox.askyesno("ยืนยันการลบ", f"ต้องการลบแคมเปญ '{campaign['name']}' ใช่หรือไม่?"):
+            try:
+                # ลบแถวจาก Google Sheet
+                row_num = campaign['row']
+                self.sheet_campaign.delete_rows(row_num, 1)
+                messagebox.showinfo("สำเร็จ", "ลบแคมเปญเรียบร้อย")
+                self.load_campaigns_data()
+            except Exception as e:
+                messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถลบแคมเปญ: {e}")
+
+    def check_campaigns(self):
+        """ตรวจสอบและแสดงสถานะแคมเปญทั้งหมด"""
+        try:
+            window = ctk.CTkToplevel(self)
+            window.title("ตรวจสอบแคมเปญ Sale")
+            window.geometry("600x500")
+            window.attributes("-topmost", True)
+            self.after(100, lambda: self.center_window(window))
+            
+            ctk.CTkLabel(window, text="📊 สถานะแคมเปญ Sale", font=("Kanit", 16, "bold")).pack(pady=10)
+            
+            # Get all campaigns
+            if not self.sheet_campaign:
+                ctk.CTkLabel(window, text="ไม่สามารถเชื่อมต่อ Campaign sheet", text_color="red").pack()
+                return
+            
+            records = self.sheet_campaign.get_all_values()
+            active_count = 0
+            expired_count = 0
+            out_of_stock = 0
+            
+            info_text = "📋 สรุปแคมเปญ:\n\n"
+            
+            from datetime import datetime as dt
+            today = dt.now().date()
+            
+            for row in records[1:]:
+                if len(row) >= 8:
+                    try:
+                        campaign_name = row[0]
+                        discount_until = dt.strptime(row[4], "%Y-%m-%d").date() if row[4] else None
+                        stock = int(row[6]) if row[6] else 0
+                        status = row[8] if len(row) > 8 else "Active"
+                        
+                        if status == "Active":
+                            if discount_until and discount_until < today:
+                                expired_count += 1
+                            elif stock <= 0:
+                                out_of_stock += 1
+                            else:
+                                active_count += 1
+                    except:
+                        pass
+            
+            info_text += f"✅ แคมเปญใช้งาน: {active_count} รายการ\n"
+            info_text += f"⏰ แคมเปญหมดอายุ: {expired_count} รายการ\n"
+            info_text += f"📦 สต็อกหมด: {out_of_stock} รายการ\n"
+            info_text += f"\n💰 ทั้งหมด: {active_count + expired_count + out_of_stock} รายการ"
+            
+            ctk.CTkLabel(window, text=info_text, font=("Kanit", 12), justify="left").pack(pady=20, padx=20, fill="both", expand=True)
+            
+            ctk.CTkButton(window, text="ปิด", command=window.destroy, font=("Kanit", 11, "bold")).pack(pady=10)
+            
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถตรวจสอบแคมเปญ: {e}")
 
 if __name__ == "__main__":
     app = StockManagerApp()

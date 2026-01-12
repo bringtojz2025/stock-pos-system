@@ -1,0 +1,30 @@
+{
+    "TEST": {
+        "type": "fixed",
+        "value": 100.0,
+        "used": 0,
+        "limit": 1,
+        "created_date": "2026-01-12"
+    },
+    "TEST10": {
+        "type": "percent",
+        "value": 10.0,
+        "used": 0,
+        "limit": 10,
+        "created_date": "2026-01-12"
+    },
+    "TEST20": {
+        "type": "percent",
+        "value": 20.0,
+        "used": 0,
+        "limit": 10,
+        "created_date": "2026-01-13"
+    },
+    "TEST30": {
+        "type": "percent",
+        "value": 30.0,
+        "used": 1,
+        "limit": 10,
+        "created_date": "2026-01-13"
+    }
+}
