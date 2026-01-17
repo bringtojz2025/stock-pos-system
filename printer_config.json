@@ -1,3 +1,4 @@
 {
-  "printer_name": "Microsoft Print to PDF"
+  "receipt_printer": "Microsoft Print to PDF",
+  "label_printer": "Microsoft Print to PDF"
 }

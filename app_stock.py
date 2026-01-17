@@ -828,13 +828,9 @@ objShell.MinimizeAll()
                                                    width=60)
         self.lbl_auto_print_status.pack(side="left", padx=5)
         
-        # ปุ่มเลือกเครื่องปริ้นและดูโฟลเดอร์ใบเสร็จ
+        # ปุ่มดูโฟลเดอร์ใบเสร็จ
         printer_receipt_frame = ctk.CTkFrame(receipt_frame, fg_color="transparent")
         printer_receipt_frame.pack(fill="x", padx=10, pady=5)
-        
-        btn_select_printer = ctk.CTkButton(printer_receipt_frame, text="🖨️ เลือกเครื่องปริ้น", command=self.open_printer_settings,
-                                          font=("Kanit", 14), height=30, fg_color="#2E86C1", hover_color="#1E5BA8", anchor="center")
-        btn_select_printer.pack(fill="x", expand=True, padx=0, pady=2)
         
         btn_open_receipts = ctk.CTkButton(printer_receipt_frame, text="📁 เปิดโฟลเดอร์ใบเสร็จ", 
                                           command=lambda: os.startfile(self.receipts_folder) if os.path.exists(self.receipts_folder) else messagebox.showwarning("แจ้งเตือน", "ยังไม่มีใบเสร็จ"),
@@ -914,17 +910,31 @@ objShell.MinimizeAll()
             campaign_price = price
             is_campaign = False
             campaign_name = ""
+            
+            # DEBUG: ปรินท์ข้อมูล
+            print(f"[DEBUG] Barcode: {barcode}, Campaigns count: {len(self.campaigns_data)}")
+            
             for campaign_key, campaign in self.campaigns_data.items():
+                print(f"[DEBUG] Checking campaign: {campaign_key}, barcode: {campaign['barcode']}, status: {campaign.get('status', 'N/A')}")
+                
                 if campaign['barcode'] == barcode and campaign['status'] == 'Active':
+                    print(f"[DEBUG] Found matching campaign: {campaign_key}")
                     # ตรวจสอบว่าแคมเปญยังไม่หมดอายุ
                     try:
                         discount_until = datetime.strptime(campaign['discount_until'], "%Y-%m-%d")
+                        print(f"[DEBUG] Discount until: {discount_until}, Now: {datetime.now()}")
+                        
                         if datetime.now() <= discount_until:
+                            print(f"[DEBUG] Campaign is still valid")
                             # เช็คจำนวนสต็อก Campaign ว่าพอสำหรับใบเสร็จนี้หรือไม่
                             campaign_stock = campaign.get('stock', 0)
                             qty_in_campaign_cart = sum(item['qty'] for item in self.cart_items if item['barcode'] == barcode)
                             
-                            if qty_in_campaign_cart >= campaign_stock:
+                            print(f"[DEBUG] Campaign stock: {campaign_stock}, Qty in cart: {qty_in_campaign_cart}")
+                            
+                            # ถ้า campaign_stock = 0 แสดงว่าไม่มีข้อจำกัด (ไม่จำกัด)
+                            # ถ้า qty >= campaign_stock แสดงว่าสต็อกหมด
+                            if campaign_stock > 0 and qty_in_campaign_cart >= campaign_stock:
                                 # แจ้งเตือนว่าสต็อกแคมเปญหมดแล้ว กลับไปใช้ราคาปกติ - ด้วย Dialog สวยงาม
                                 out_of_stock_dialog = ctk.CTkToplevel(self)
                                 out_of_stock_dialog.title("⚠️ สินค้าแคมเปญหมดแล้ว")
@@ -975,12 +985,18 @@ objShell.MinimizeAll()
                                 is_campaign = False
                             else:
                                 # สต็อกพอ ใช้ราคาแคมเปญ
+                                print(f"[DEBUG] Using campaign price: {campaign['discount_price']}")
                                 campaign_price = campaign['discount_price']
                                 is_campaign = True
                                 campaign_name = campaign['name']
                             break
-                    except:
+                        else:
+                            print(f"[DEBUG] Campaign expired")
+                    except Exception as e:
+                        print(f"[DEBUG] Error checking campaign date: {e}")
                         pass
+            
+            print(f"[DEBUG] Final: is_campaign={is_campaign}, campaign_price={campaign_price}")
             
             existing_item = next((item for item in self.cart_items if item['barcode'] == barcode), None)
             if existing_item:
@@ -991,6 +1007,9 @@ objShell.MinimizeAll()
                     'barcode': barcode, 'name': name, 'qty': 1, 'price': campaign_price,
                     'total': campaign_price, 'row_idx': row_idx, 'original_price': price
                 })
+            
+            # อัปเดตการแสดงผลส่วนลด (disable coupon ถ้าเป็นสินค้าแคมเปญ)
+            self.update_discount_display()
             
             self.play_sound("success")
             
@@ -1344,38 +1363,6 @@ objShell.MinimizeAll()
             total_amount += item['total']
         self.lbl_total.configure(text=f"ยอดรวม: {total_amount:,.2f} บาท")
         
-        # อัปเดตการแสดงผลส่วนลด
-        discount_code = self.discount_code_entry.get().strip()
-        discount_amount = 0.0
-        
-        if discount_code:
-            # ตรวจสอบเงื่อนไขส่วนลด
-            if discount_code.startswith("DISC10"):
-                discount_amount = total_amount * 0.10
-            elif discount_code.upper() == "SPECIAL":
-                discount_amount = total_amount * 0.15
-            elif discount_code.upper().startswith("DISC"):
-                try:
-                    percent = int(discount_code.split("-")[0].replace("DISC", ""))
-                    discount_amount = total_amount * (percent / 100)
-                except:
-                    discount_amount = 0.0
-        
-        final_price = max(0, total_amount - discount_amount)
-        
-        # อัปเดตการแสดงผล
-        if hasattr(self, 'lbl_discount_amount'):
-            self.lbl_discount_amount.configure(text=f"ส่วนลด: {discount_amount:,.2f} บาท" if discount_amount > 0 else "ส่วนลด: 0.00 บาท")
-            self.lbl_final_price.configure(text=f"ราคาสุดท้าย: {final_price:,.2f} บาท")
-            
-            # เปลี่ยนสีตามสถานะส่วนลด
-            if discount_amount > 0:
-                self.lbl_discount_amount.configure(text_color="#27AE60")
-                self.lbl_final_price.configure(text_color="#27AE60")
-            else:
-                self.lbl_discount_amount.configure(text_color="#E74C3C")
-                self.lbl_final_price.configure(text_color="#F39C12")
-        
         return total_amount
 
     def delete_from_cart(self):
@@ -1386,6 +1373,8 @@ objShell.MinimizeAll()
             barcode_to_del = str(item_values[0])
             self.cart_items = [item for item in self.cart_items if str(item['barcode']) != barcode_to_del]
         self.update_cart_ui()
+        # อัปเดตการแสดงผลส่วนลด (เปิด coupon input ถ้าเหลือเพียง regular items)
+        self.update_discount_display()
 
     def check_used_coupons(self):
         """ตรวจสอบโค้ตที่เคยใช้แล้ว - ตรวจสอบจาก column 10 (UsedCoupon) เท่านั้น
@@ -1442,6 +1431,45 @@ objShell.MinimizeAll()
 
     def update_discount_display(self, event=None):
         """อัปเดตการแสดงผลส่วนลดและตรวจสอบสถานะโค้ต"""
+        # เช็คว่ามีสินค้าแคมเปญในตะกร้าหรือไม่ (ก่อน update_cart_ui)
+        has_campaign_item = any('original_price' in item and item['original_price'] > item['price'] for item in self.cart_items)
+        print(f"[DEBUG update_discount] START: has_campaign_item={has_campaign_item}, cart_items={[(item['barcode'], item.get('original_price'), item['price']) for item in self.cart_items]}")
+        
+        # ถ้ามีสินค้าแคมเปญ ให้ disable coupon input และแสดงส่วนลดแคมเปญเท่านั้น
+        if has_campaign_item:
+            print(f"[DEBUG update_discount] CAMPAIGN MODE - ลบโค้ดออก disable input")
+            self.discount_code_entry.delete(0, "end")  # ลบโค้ดออก
+            self.update_idletasks()  # อัปเดต UI ทันที
+            self.discount_code_entry.configure(state="disabled")
+            
+            # คำนวณ total_amount จาก cart_items (เป็นราคาที่ลดแล้ว)
+            total_amount = sum(item['total'] for item in self.cart_items)
+            
+            # คำนวณส่วนลดจากสินค้าแคมเปญ (เพื่อแสดง)
+            campaign_discount = 0.0
+            for item in self.cart_items:
+                if 'original_price' in item and item['original_price'] > item['price']:
+                    discount_per_item = (item['original_price'] - item['price']) * item['qty']
+                    campaign_discount += discount_per_item
+            
+            coupon_status = "🎯 ส่วนลดแคมเปญ (ไม่สามารถใช้โค้ตได้)"
+            status_color = "#FF9800"
+            
+            # ราคาสุดท้าย = ยอดรวม (ไม่ต้องลบส่วนลดเพิ่มอีก เพราะเป็นราคาที่ลดแล้ว)
+            final_price = total_amount
+            
+            # อัปเดตการแสดงผล
+            self.lbl_discount_amount.configure(text=f"ส่วนลด: {campaign_discount:,.2f} บาท", text_color="#E74C3C")
+            self.lbl_final_price.configure(text=f"ราคาสุดท้าย: {final_price:,.2f} บาท", text_color="#27AE60")
+            self.lbl_coupon_status.configure(text=coupon_status, text_color=status_color)
+            print(f"[DEBUG update_discount] Campaign mode: discount={campaign_discount}, final={final_price}, discount_code_entry.get()={self.discount_code_entry.get()}")
+            return
+        
+        print(f"[DEBUG update_discount] NORMAL MODE - เปิด coupon input")
+        # ถ้าไม่มีสินค้าแคมเปญ ให้เปิด coupon input
+        self.discount_code_entry.configure(state="normal")
+        
+        # เรียก update_cart_ui เพื่อคำนวณ total_amount
         total_amount = self.update_cart_ui()
         discount_code = self.discount_code_entry.get().strip().upper()
         discount_amount = 0.0
@@ -1491,6 +1519,258 @@ objShell.MinimizeAll()
                     
                     status_color = "#27AE60"
                     is_valid_code = True
+            
+            # ตรวจสอบ DISCOUNT05 (ลด 5% จากการซื้อครบ 200 บาท)
+            elif discount_code == "DISCOUNT05":
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISCOUNT05 ยังไม่เคยใช้
+                    is_valid_code = True
+                    discount_percent = 5
+                    discount_amount = total_amount * 0.05
+                    coupon_status = "✓ DISCOUNT05 (ลด 5%)"
+            
+            # ตรวจสอบ DISCOUNT10 (ลด 10% จากการซื้อครบ 500 บาท)
+            elif discount_code == "DISCOUNT10":
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISCOUNT10 ยังไม่เคยใช้
+                    is_valid_code = True
+                    discount_percent = 10
+                    discount_amount = total_amount * 0.10
+                    coupon_status = "✓ DISCOUNT10 (ลด 10%)"
+            
+            # ตรวจสอบ hardcoded coupon
+            elif discount_code.startswith("DISC10"):
+                # ตรวจสอบว่าถูกใช้แล้วหรือไม่ (เฉพาะ hardcoded)
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISC10 ยังไม่เคยใช้
+                    is_valid_code = True
+                    discount_percent = 10
+                    discount_amount = total_amount * 0.10
+                    coupon_status = "✓ DISC10 (ลด 10%)"
+            
+            elif discount_code.startswith("DISC15"):
+                # ตรวจสอบว่าถูกใช้แล้วหรือไม่
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISC15
+                    is_valid_code = True
+                    discount_percent = 15
+                    discount_amount = total_amount * 0.15
+                    coupon_status = "✓ DISC15 (ลด 15%)"
+            
+            elif discount_code.startswith("DISC20"):
+                # ตรวจสอบว่าถูกใช้แล้วหรือไม่
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISC20
+                    is_valid_code = True
+                    discount_percent = 20
+                    discount_amount = total_amount * 0.20
+                    coupon_status = "✓ DISC20 (ลด 20%)"
+            
+            elif discount_code == "SPECIAL":
+                # ตรวจสอบว่าถูกใช้แล้วหรือไม่
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # SPECIAL ยังไม่เคยใช้
+                    is_valid_code = True
+                    discount_percent = 15
+                    discount_amount = total_amount * 0.15
+                    coupon_status = "✓ SPECIAL (ลด 15%)"
+            
+            elif discount_code.startswith("DISC"):
+                # DISCXX format อื่นๆ
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    try:
+                        percent = int(discount_code.split("-")[0].replace("DISC", ""))
+                        discount_amount = total_amount * (percent / 100)
+                        coupon_status = f"✓ DISC{percent} (ลด {percent}%)"
+                        is_valid_code = True
+                    except:
+                        discount_amount = 0.0
+                        coupon_status = "✗ รูปแบบไม่ถูกต้อง"
+                        status_color = "#E74C3C"
+            
+            else:
+                # โค้ตที่ไม่รู้จัก
+                coupon_status = "✗ โค้ตไม่ถูกต้อง"
+                status_color = "#E74C3C"
+                discount_amount = 0.0
+                self.last_coupon_checked = discount_code
+        
+        else:
+            self.last_coupon_checked = ""
+        
+        final_price = max(0, total_amount - discount_amount)
+        
+        # อัปเดตการแสดงผล
+        self.lbl_discount_amount.configure(text=f"ส่วนลด: {discount_amount:,.2f} บาท" if discount_amount > 0 else "ส่วนลด: 0.00 บาท")
+        self.lbl_final_price.configure(text=f"ราคาสุดท้าย: {final_price:,.2f} บาท")
+        self.lbl_coupon_status.configure(text=coupon_status, text_color=status_color)
+        
+        # เปลี่ยนสีตามสถานะส่วนลด
+        if discount_amount > 0:
+            self.lbl_discount_amount.configure(text_color="#27AE60")
+            self.lbl_final_price.configure(text_color="#27AE60")
+        elif is_used_coupon:
+            self.lbl_discount_amount.configure(text_color="#E74C3C")
+            self.lbl_final_price.configure(text_color="#E74C3C")
+        else:
+            self.lbl_discount_amount.configure(text_color="#E74C3C")
+            self.lbl_final_price.configure(text_color="#F39C12")
+        
+        # แสดงเตือนเมื่อพบโค้ตที่ใช้แล้ว
+        if show_warning and self.app_running and self.winfo_exists():
+            self.after(100, lambda: messagebox.showwarning(
+                "⚠️ คูปองนี้ใช้ไปแล้ว!", 
+                f"❌ โค้ต '{discount_code}' ได้ถูกใช้งานไปแล้ว\n\n"
+                f"💡 คูปองแต่ละใบสามารถใช้ได้แค่ครั้งเดียวเท่านั้น\n\n"
+                f"กรุณาตรวจสอบโค้ตของลูกค้าอีกครั้ง"
+            ))
+            # ตรวจสอบรูปแบบโค้ต
+            is_valid_code = False
+            discount_percent = 0
+            
+            # ตรวจสอบจาก Google Sheet coupon_database ก่อน
+            if discount_code in self.coupon_database:
+                coupon = self.coupon_database[discount_code]
+                limit = coupon.get('limit', 0)
+                used = coupon.get('used', 0)
+                
+                # ตรวจสอบว่าใช้ครบแล้วหรือไม่
+                if limit > 0 and used >= limit:
+                    coupon_status = f"✗ ใช้ครบแล้ว ({used}/{limit})"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                else:
+                    # โค้ตยังสามารถใช้ได้
+                    coupon_type = coupon.get('type', 'percent').lower()
+                    value = coupon.get('value', 0)
+                    
+                    if coupon_type == 'fixed':
+                        discount_amount = min(float(value), total_amount)
+                        # แสดง (used/limit) สำหรับคูปองจาก Google Sheet
+                        if limit > 0:
+                            coupon_status = f"✓ ลดคงที่ ฿{value:.2f} ({used}/{limit})"
+                        else:
+                            coupon_status = f"✓ ลดคงที่ ฿{value:.2f} (ไม่จำกัด)"
+                    else:  # percent
+                        discount_amount = total_amount * (float(value) / 100)
+                        # แสดง (used/limit) สำหรับคูปองจาก Google Sheet
+                        if limit > 0:
+                            coupon_status = f"✓ ลด {value}% ({used}/{limit})"
+                        else:
+                            coupon_status = f"✓ ลด {value}% (ไม่จำกัด)"
+                    
+                    status_color = "#27AE60"
+                    is_valid_code = True
+            
+            # ตรวจสอบ DISCOUNT05 (ลด 5% จากการซื้อครบ 200 บาท)
+            elif discount_code == "DISCOUNT05":
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISCOUNT05 ยังไม่เคยใช้
+                    is_valid_code = True
+                    discount_percent = 5
+                    discount_amount = total_amount * 0.05
+                    coupon_status = "✓ DISCOUNT05 (ลด 5%)"
+            
+            # ตรวจสอบ DISCOUNT10 (ลด 10% จากการซื้อครบ 500 บาท)
+            elif discount_code == "DISCOUNT10":
+                used_coupons = self.check_used_coupons()
+                if discount_code in used_coupons:
+                    coupon_status = "✗ ใช้แล้ว"
+                    status_color = "#E74C3C"
+                    discount_amount = 0.0
+                    is_used_coupon = True
+                    is_valid_code = True
+                    if discount_code != self.last_coupon_checked:
+                        show_warning = True
+                        self.last_coupon_checked = discount_code
+                else:
+                    # DISCOUNT10 ยังไม่เคยใช้
+                    is_valid_code = True
+                    discount_percent = 10
+                    discount_amount = total_amount * 0.10
+                    coupon_status = "✓ DISCOUNT10 (ลด 10%)"
             
             # ตรวจสอบ hardcoded coupon
             elif discount_code.startswith("DISC10"):
@@ -1637,6 +1917,23 @@ objShell.MinimizeAll()
         coupon_code = self.discount_code_entry.get().strip().upper()
         payment_method = self.payment_method.get()
         
+        # เช็คว่ามีสินค้าแคมเปญหรือไม่
+        has_campaign_item = any('original_price' in item and item['original_price'] > item['price'] for item in self.cart_items)
+        
+        # ถ้ามีสินค้าแคมเปญ ไม่สามารถใช้โค้ตส่วนลดได้
+        if has_campaign_item and coupon_code:
+            messagebox.showwarning(
+                "⚠️ ไม่สามารถใช้โค้ตได้",
+                "สินค้าแคมเปญไม่สามารถใช้รวมกับโค้ตส่วนลดได้\n\n"
+                "💡 หากต้องการใช้โค้ต ให้ลบสินค้าแคมเปญออกจากตะกร้า"
+            )
+            # ลบโค้ดออกและอัปเดต UI
+            self.discount_code_entry.delete(0, "end")
+            coupon_code = ""
+            # เรียก update_discount_display หลังปิด dialog เพื่อให้ UI อัปเดตถูกต้อง
+            self.after(100, self.update_discount_display)
+            return
+        
         # ตรวจสอบว่าโค้ตถูกใช้แล้วหรือไม่
         if coupon_code:
             is_valid = False
@@ -1668,9 +1965,13 @@ objShell.MinimizeAll()
                 # ตรวจสอบรูปแบบโค้ตว่า valid หรือไม่
                 if coupon_code.startswith("DISC10") or coupon_code.startswith("DISC15") or \
                    coupon_code.startswith("DISC20") or coupon_code == "SPECIAL" or \
+                   coupon_code == "DISCOUNT05" or coupon_code == "DISCOUNT10" or \
                    coupon_code.startswith("DISC"):
                     try:
-                        if coupon_code.startswith("DISC"):
+                        if coupon_code == "DISCOUNT05" or coupon_code == "DISCOUNT10":
+                            # DISCOUNT05 และ DISCOUNT10 เป็นโค้ตสำเร็จรูป
+                            is_valid = True
+                        elif coupon_code.startswith("DISC"):
                             # ทดลองแยก percent
                             percent = int(coupon_code.split("-")[0].replace("DISC", ""))
                             if 0 < percent <= 100:
@@ -1684,6 +1985,8 @@ objShell.MinimizeAll()
                 messagebox.showerror("❌ โค้ตไม่ถูกต้อง", 
                     f"โค้ต '{coupon_code}' ไม่ถูกต้อง\n\n"
                     f"รูปแบบที่ถูกต้อง:\n"
+                    f"• DISCOUNT05 (ลด 5% - จากซื้อครบ 200 บาท)\n"
+                    f"• DISCOUNT10 (ลด 10% - จากซื้อครบ 500 บาท)\n"
                     f"• DISC10-XXXX (ลด 10%)\n"
                     f"• DISC15-XXXX (ลด 15%)\n"
                     f"• DISC20-XXXX (ลด 20%)\n"
@@ -1698,17 +2001,16 @@ objShell.MinimizeAll()
         used_coupon = ""  # โค้ตที่ใช้สำหรับส่วนลด
         received_coupon = ""  # โค้ตที่ได้รับ
         
-        # คำนวณส่วนลดจากสินค้าแคมเปญก่อน (นำส่วนต่างราคาจากแคมเปญมาคิดเป็นส่วนลด)
-        campaign_discount = 0.0
-        for item in self.cart_items:
-            if 'original_price' in item and item['original_price'] > item['price']:
-                # สินค้าที่มีราคาแคมเปญ ลดจาก original_price
-                discount_per_item = (item['original_price'] - item['price']) * item['qty']
-                campaign_discount += discount_per_item
+        # เช็คว่ามีสินค้าแคมเปญหรือไม่
+        has_campaign_item = any('original_price' in item and item['original_price'] > item['price'] for item in self.cart_items)
         
-        discount_amount = campaign_discount  # เริ่มต้นด้วยส่วนลดจากแคมเปญ
-        
-        if coupon_code:
+        # ถ้ามีสินค้าแคมเปญ ไม่คำนวณส่วนลดเพิ่มเติม (ราคาลดแล้ว)
+        if has_campaign_item:
+            # สินค้าแคมเปญ: ราคาลดแล้ว ไม่ต้องลบส่วนลดอีก
+            discount_amount = 0.0
+            final_amount = total_amount
+        # ถ้าไม่มีสินค้าแคมเปญ แล้วมี coupon code ให้คำนวณส่วนลดจากโค้ต
+        elif coupon_code:
             used_coupon = coupon_code
             
             # ตรวจสอบจาก Google Sheet coupon_database ก่อน
@@ -1718,35 +2020,43 @@ objShell.MinimizeAll()
                 value = coupon.get('value', 0)
                 
                 if coupon_type == 'fixed':
-                    coupon_discount = min(float(value), total_amount)
+                    discount_amount = min(float(value), total_amount)
                 else:  # percent
-                    coupon_discount = total_amount * (float(value) / 100)
-                discount_amount += coupon_discount  # รวมส่วนลดจากโค้ต
+                    discount_amount = total_amount * (float(value) / 100)
             
+            elif coupon_code == "DISCOUNT05":
+                discount_amount = total_amount * 0.05
+            elif coupon_code == "DISCOUNT10":
+                discount_amount = total_amount * 0.10
             elif coupon_code.startswith("DISC10"):
-                coupon_discount = total_amount * 0.10
-                discount_amount += coupon_discount
+                discount_amount = total_amount * 0.10
             elif coupon_code.startswith("DISC15"):
-                coupon_discount = total_amount * 0.15
-                discount_amount += coupon_discount
+                discount_amount = total_amount * 0.15
             elif coupon_code.startswith("DISC20"):
-                coupon_discount = total_amount * 0.20
-                discount_amount += coupon_discount
+                discount_amount = total_amount * 0.20
             elif coupon_code == "SPECIAL":
-                coupon_discount = total_amount * 0.15
-                discount_amount += coupon_discount
+                discount_amount = total_amount * 0.15
             elif coupon_code.startswith("DISC"):
                 try:
                     percent = int(coupon_code.split("-")[0].replace("DISC", ""))
-                    coupon_discount = total_amount * (percent / 100)
-                    discount_amount += coupon_discount
+                    discount_amount = total_amount * (percent / 100)
                 except:
                     pass
+            
+            final_amount = total_amount - discount_amount
+        else:
+            # ไม่มีส่วนลด
+            discount_amount = 0.0
+            final_amount = total_amount
         
-        # ตรวจสอบว่าลูกค้าได้รับโค้ตใหม่หรือไม่ (ซื้อครบ 500 บาท)
-        final_amount = total_amount - discount_amount
-        if final_amount >= 500:
-            received_coupon = f"DISC10-{datetime.now().strftime('%M%S')}"
+        # เงื่อนไขการให้คูปองตามยอดรวม (อ่านจากการตั้งค่า)
+        discount05_amount = self.app_settings.get('discount05_amount', 200)
+        discount10_amount = self.app_settings.get('discount10_amount', 500)
+        
+        if final_amount >= discount10_amount:
+            received_coupon = "DISCOUNT10"  # ลด 10% ครั้งต่อไป
+        elif final_amount >= discount05_amount:
+            received_coupon = "DISCOUNT05"  # ลด 5% ครั้งต่อไป
         
         # แสดงหน้าต่างยืนยันการรับเงินก่อนบันทึก
         if self.show_confirm_payment_dialog(total_amount, discount_amount, final_amount, payment_method):
@@ -1834,6 +2144,33 @@ objShell.MinimizeAll()
         
         def cancel():
             result["confirmed"] = False
+            # เขียน "ยกเลิก" ลง Google Sheet เพื่อบอกว่าไม่ได้รับเงินจริง
+            try:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                receipt_id = f"CANCEL-{timestamp.replace(' ', '-').replace(':', '')}"
+                
+                # เขียนลง Google Sheet Sales
+                if self.sheet_sales:
+                    self.sheet_sales.append_row([
+                        receipt_id,  # ReceiptID
+                        timestamp,   # Date
+                        "",          # CustomerPhone
+                        "",          # CustomerName
+                        "",          # Barcode
+                        "",          # Name
+                        "",          # Qty
+                        "",          # UnitPrice
+                        "",          # Total
+                        "",          # UsedCoupon
+                        "",          # DiscountAmount
+                        "",          # PaymentMethod
+                        "",          # ReceivedCoupon
+                        "",          # VAT
+                        "Yes"        # Cancel (Mark as cancelled)
+                    ])
+            except Exception as e:
+                print(f"⚠️ ไม่สามารถบันทึกการยกเลิก: {e}")
+            
             dialog.destroy()
         
         ctk.CTkButton(button_frame, text="✅ ยืนยันและรับเงิน", 
@@ -1882,19 +2219,27 @@ objShell.MinimizeAll()
                     vat_amount = final_total * (vat_rate / 100)
             
             for item in self.cart_items:
-                # โครงสร้าง: ReceiptID, Date, CustomerPhone, CustomerName, Barcode, Name, Qty, UnitPrice, Total, UsedCoupon, DiscountAmount, PaymentMethod, ReceivedCoupon, VAT, Cancel
+                # โครงสร้าง: ReceiptID, Date, CustomerPhone, CustomerName, Barcode, Name, Qty, UnitPrice, Total, UsedCoupon, DiscountAmount, PaymentMethod, ReceivedCoupon, VAT, Cancel, CampaignCode
+                # หาชื่อแคมเปญจาก item
+                campaign_code = ""
+                for campaign_key, campaign in self.campaigns_data.items():
+                    if campaign['barcode'] == item['barcode'] and campaign['status'] == 'Active' and 'original_price' in item and item['original_price'] > item['price']:
+                        campaign_code = campaign.get('name', '')
+                        break
+                
                 row = [receipt_id, timestamp, customer_phone, customer_name, 
                        item['barcode'], item['name'], 
                        item['qty'], item['price'], item['total'], used_coupon, discount_amount, 
-                       payment_method, received_coupon, f"{vat_amount:.2f}", "No"]  # VAT amount + "No" สำหรับ Cancel column
+                       payment_method, received_coupon, f"{vat_amount:.2f}", "No", campaign_code]  # Campaign code เพิ่มไป
                 sales_rows.append(row)
                 
-                # เก็บข้อมูลสำหรับ PDF ใบเสร็จ
+                # เก็บข้อมูลสำหรับ PDF ใบเสร็จ (รวม campaign_code)
                 items_for_receipt.append({
                     'name': item['name'],
                     'qty': item['qty'],
                     'price': item['price'],
-                    'total': item['total']
+                    'total': item['total'],
+                    'campaign_code': campaign_code  # เพิ่ม campaign code สำหรับ PDF
                 })
             
             self.sheet_sales.append_rows(sales_rows)
@@ -2005,7 +2350,20 @@ objShell.MinimizeAll()
         qr_window.geometry("400x520")
         qr_window.attributes("-topmost", True)
         self.center_window(qr_window)
-        ctk.CTkLabel(qr_window, text="ซื้อครบ 200 บาท\nรับคูปองส่วนลด 10% ครั้งถัดไป", 
+        
+        # แสดงข้อความตามประเภทคูปอง (อ่านจากการตั้งค่า)
+        message = "รับคูปอง\nลดราคาครั้งถัดไป"
+        
+        if code == "DISCOUNT10":
+            amount = self.app_settings.get('discount10_amount', 500)
+            message = self.app_settings.get('discount10_message', f'ซื้อครบ {amount} บาท\nรับคูปองลด 10% ครั้งถัดไป')
+            message = message.replace("{amount}", str(amount))
+        elif code == "DISCOUNT05":
+            amount = self.app_settings.get('discount05_amount', 200)
+            message = self.app_settings.get('discount05_message', f'ซื้อครบ {amount} บาท\nรับคูปองลด 5% ครั้งถัดไป')
+            message = message.replace("{amount}", str(amount))
+        
+        ctk.CTkLabel(qr_window, text=message, 
                      font=("Kanit", 18, "bold"), text_color="#E67E22").pack(pady=20)
         qr = qrcode.QRCode(box_size=10, border=2)
         qr.add_data(code)
@@ -2232,10 +2590,10 @@ objShell.MinimizeAll()
                                        font=("Kanit", 13, "bold"), height=35)
         btn_print_label.pack(side="left", fill="x", expand=True, padx=2)
         
-        btn_select_printer_inv = ctk.CTkButton(print_frame, text="🖨️ เลือกเครื่องปริ้น", command=self.open_printer_settings,
-                                              fg_color="#2E86C1", border_width=2, border_color="#1E5BA8", width=150,
-                                              font=("Kanit", 13, "bold"), height=35)
-        btn_select_printer_inv.pack(side="left", padx=2)
+        btn_change_image = ctk.CTkButton(print_frame, text="🖼️ เปลี่ยน/เพิ่มรูป", command=self.change_product_image,
+                                        fg_color="#9B59B6", border_width=2, border_color="#7D3C98", width=150,
+                                        font=("Kanit", 13, "bold"), height=35)
+        btn_change_image.pack(side="left", padx=2)
 
         # --- RIGHT PANEL ---
         frame_detail = ctk.CTkFrame(paned, width=400)
@@ -2932,26 +3290,53 @@ objShell.MinimizeAll()
         self.tree_rec_items.heading("Total", text="รวม"); self.tree_rec_items.column("Total", width=80, anchor="e")
         self.tree_rec_items.pack(fill="x", pady=3, padx=5)
         
-        # เพิ่มส่วนแสดงข้อมูลใบเสร็จ (ยอดรวม, ส่วนลด, โค้ต)
+        # เพิ่มส่วนแสดงข้อมูลใบเสร็จ (ยอดรวม, ส่วนลด, โค้ต) - แบ่งเป็นสองแถว
         receipt_info_frame = ctk.CTkFrame(right_frame, fg_color="gray25", corner_radius=8)
         receipt_info_frame.pack(fill="x", padx=5, pady=5)
         
-        # เพิ่มข้อมูลลูกค้า
-        self.lbl_receipt_customer = ctk.CTkLabel(receipt_info_frame, text="👤 ลูกค้า: -", 
-                                                  font=("Kanit", 12), text_color="#3498DB")
-        self.lbl_receipt_customer.pack(pady=3, padx=10, anchor="w")
+        # ========== ROW 1: ข้อมูลลูกค้าและโค้ต ==========
+        info_row1 = ctk.CTkFrame(receipt_info_frame, fg_color="transparent")
+        info_row1.pack(fill="x", padx=10, pady=(8, 5))
         
-        self.lbl_receipt_phone = ctk.CTkLabel(receipt_info_frame, text="📱 เบอร์โทร: -", 
-                                              font=("Kanit", 12), text_color="#3498DB")
-        self.lbl_receipt_phone.pack(pady=3, padx=10, anchor="w")
+        # เพิ่มข้อมูลลูกค้า (ซ้าย)
+        customer_col = ctk.CTkFrame(info_row1, fg_color="transparent")
+        customer_col.pack(side="left", fill="x", expand=True, padx=(0, 10))
         
-        self.lbl_receipt_coupon_used = ctk.CTkLabel(receipt_info_frame, text="โค้ตที่ใช้: -", 
-                                                    font=("Kanit", 12), text_color="#E74C3C")
-        self.lbl_receipt_coupon_used.pack(pady=3, padx=10, anchor="w")
+        self.lbl_receipt_customer = ctk.CTkLabel(customer_col, text="👤 ลูกค้า: -", 
+                                                  font=("Kanit", 11), text_color="#3498DB")
+        self.lbl_receipt_customer.pack(anchor="w")
         
-        self.lbl_receipt_coupon_received = ctk.CTkLabel(receipt_info_frame, text="โค้ตที่ได้รับ: -", 
-                                                        font=("Kanit", 12), text_color="#27AE60")
-        self.lbl_receipt_coupon_received.pack(pady=3, padx=10, anchor="w")
+        self.lbl_receipt_phone = ctk.CTkLabel(customer_col, text="📱 เบอร์โทร: -", 
+                                              font=("Kanit", 11), text_color="#3498DB")
+        self.lbl_receipt_phone.pack(anchor="w", pady=(2, 0))
+        
+        # โค้ตที่ใช้ (ขวา)
+        coupon_col = ctk.CTkFrame(info_row1, fg_color="transparent")
+        coupon_col.pack(side="right", fill="x", expand=True, padx=(10, 0))
+        
+        self.lbl_receipt_coupon_used = ctk.CTkLabel(coupon_col, text="โค้ตที่ใช้: -", 
+                                                    font=("Kanit", 11), text_color="#E74C3C")
+        self.lbl_receipt_coupon_used.pack(anchor="w")
+        
+        self.lbl_receipt_coupon_received = ctk.CTkLabel(coupon_col, text="โค้ตที่ได้รับ: -", 
+                                                        font=("Kanit", 11), text_color="#27AE60")
+        self.lbl_receipt_coupon_received.pack(anchor="w", pady=(2, 0))
+        
+        # ========== ROW 2: ข้อมูลแคมเปญและส่วนลด ==========
+        info_row2 = ctk.CTkFrame(receipt_info_frame, fg_color="transparent")
+        info_row2.pack(fill="x", padx=10, pady=(5, 8))
+        
+        # เพิ่มข้อมูล Campaign (ซ้าย)
+        campaign_col = ctk.CTkFrame(info_row2, fg_color="transparent")
+        campaign_col.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        self.lbl_receipt_campaign = ctk.CTkLabel(campaign_col, text="🎁 สินค้าแคมเปญ: -", 
+                                                 font=("Kanit", 11), text_color="#F39C12")
+        self.lbl_receipt_campaign.pack(anchor="w")
+        
+        self.lbl_receipt_campaign_discount = ctk.CTkLabel(campaign_col, text="💰 ส่วนลด: 0.00 บาท", 
+                                                          font=("Kanit", 11), text_color="#F39C12")
+        self.lbl_receipt_campaign_discount.pack(anchor="w", pady=(2, 0))
         
         self.lbl_receipt_summary = ctk.CTkLabel(receipt_info_frame, text="ยอดรวม: 0.00 บาท | ภาษี VAT: 0.00 บาท | ส่วนลด: 0.00 บาท | ยอดสุดท้าย: 0.00 บาท",
                                                 font=("Kanit", 13, "bold"), text_color="#2CC985")
@@ -3001,8 +3386,8 @@ objShell.MinimizeAll()
                     if len(row) >= 9:  # ต้องมีอย่างน้อย 9 column
                         rec_id = row[0]
                         date_str = row[1]
-                        customer_phone = row[2] if len(row) > 2 else ''  # NEW: CustomerPhone
-                        customer_name = row[3] if len(row) > 3 else ''   # NEW: CustomerName
+                        customer_phone = row[2] if len(row) > 2 else ''  # CustomerPhone
+                        customer_name = row[3] if len(row) > 3 else ''   # CustomerName
                         
                         if rec_id not in self.sales_history_data:
                             # ดึงค่า payment_method (column 12 = index 11)
@@ -3056,13 +3441,17 @@ objShell.MinimizeAll()
                                 is_cancelled = cancel_value == 'yes'
                             self.sales_history_data[rec_id]['is_cancelled'] = is_cancelled
                             
+                            # ดึงค่า campaign_code (column 16 = index 15)
+                            campaign_code = row[15] if len(row) > 15 and row[15] else ''
+                            
                             self.sales_history_data[rec_id]['items'].append({
                                 'barcode': barcode,
                                 'name': item_name,
                                 'qty': qty,
                                 'price': price,
                                 'total': total,
-                                'discount_amount': discount_amount
+                                'discount_amount': discount_amount,
+                                'campaign_code': campaign_code
                             })
                             self.sales_history_data[rec_id]['total_bill'] += total
                             # บันทึกยอดส่วนลดจากบรรทัดแรก
@@ -3162,6 +3551,36 @@ objShell.MinimizeAll()
             # แสดงโค้ตที่ได้รับ
             coupon_received_display = f"โค้ตที่ได้รับ: {coupon_received}" if coupon_received != '-' else "โค้ตที่ได้รับ: ไม่มี"
             self.lbl_receipt_coupon_received.configure(text=coupon_received_display)
+            
+            # แสดงข้อมูล Campaign Items (จาก campaign_code ในข้อมูลบันทึก)
+            campaign_items = []
+            campaign_discount = 0.0
+            for item in data.get('items', []):
+                campaign_code = item.get('campaign_code', '')
+                if campaign_code:  # ถ้ามี campaign_code
+                    campaign_items.append(f"{item['name']} ({campaign_code})")
+                    
+                    # ค้นหา campaign data จาก barcode และ campaign_code เพื่อคำนวณส่วนลด
+                    for campaign_key, campaign in self.campaigns_data.items():
+                        if campaign['barcode'] == item['barcode'] and campaign['name'] == campaign_code:
+                            full_price = float(campaign.get('full_price', 0))
+                            discount_price = float(campaign.get('discount_price', 0))
+                            discount = (full_price - discount_price) * item['qty']
+                            campaign_discount += discount
+                            print(f"[DEBUG] campaign_discount: {item['name']} = ({full_price} - {discount_price}) * {item['qty']} = {discount}")
+                            break
+            
+            if campaign_items:
+                campaign_display = f"🎁 สินค้าแคมเปญ: {', '.join(campaign_items)}"
+                self.lbl_receipt_campaign.configure(text=campaign_display, text_color="#F39C12")
+            else:
+                self.lbl_receipt_campaign.configure(text="🎁 สินค้าแคมเปญ: ไม่มี", text_color="#95A5A6")
+            
+            # แสดงส่วนลดแคมเปญ (ถ้ามีสินค้าแคมเปญจะมีส่วนลด)
+            if campaign_items and campaign_discount > 0:
+                self.lbl_receipt_campaign_discount.configure(text=f"💰 ส่วนลดแคมเปญ: {campaign_discount:,.2f} บาท", text_color="#F39C12")
+            else:
+                self.lbl_receipt_campaign_discount.configure(text="💰 ส่วนลดแคมเปญ: 0.00 บาท", text_color="#95A5A6")
             
             # แสดงสรุปยอดขายพร้อมภาษี VAT
             summary = f"ยอดรวม: {raw_total:,.2f} บาท | ภาษี VAT: {vat_amount:,.2f} บาท | ส่วนลด: {discount_total:,.2f} บาท | ยอดสุดท้าย: {final_total:,.2f} บาท"
@@ -4075,21 +4494,37 @@ objShell.MinimizeAll()
                 # อัปเดต LastVisit ในแท็บ Customers (ทำใน thread แยก)
                 threading.Thread(target=self.update_customer_last_visit, args=(normalized_input,), daemon=True).start()
                 
+                # เช็คว่ามีสินค้าแคมเปญในตะกร้าหรือไม่
+                has_campaign_item = any('original_price' in item and item['original_price'] > item['price'] for item in self.cart_items)
+                
                 # ถ้ามีโค้ตที่ค้นพบ
                 if available_coupons:
                     coupon_list = sorted(list(available_coupons))
                     
-                    # ถ้ามีโค้ตเดียว ให้ auto-apply
-                    if len(coupon_list) == 1:
+                    # ถ้ามีโค้ตเดียว ให้ auto-apply (แต่ต้องไม่มีสินค้าแคมเปญ)
+                    if len(coupon_list) == 1 and not has_campaign_item:
                         first_coupon = coupon_list[0]
                         self.discount_code_entry.delete(0, "end")
                         self.discount_code_entry.insert(0, first_coupon)
                         info_text += f"\n💳 โค้ต: {first_coupon} (ใช้อัตโนมัติ)"
                         self.update_discount_display()
+                    elif len(coupon_list) == 1 and has_campaign_item:
+                        # มีสินค้าแคมเปญ ไม่สามารถใช้ coupon - ลบโค้ดออก
+                        info_text += f"\n💳 พบโค้ต {coupon_list[0]} แต่ไม่สามารถใช้กับสินค้าแคมเปญ"
+                        self.discount_code_entry.delete(0, "end")
+                        self.discount_code_entry.configure(state="disabled")
+                        # เรียก update_discount_display หลังจากเปลี่ยนแปลง
+                        self.after(50, self.update_discount_display)
                     else:
                         # ถ้ามีหลายโค้ต ให้เลือก (ตัวกรองรอบนี้ลบไปแล้ว)
-                        self.show_coupon_selection_dialog(coupon_list)
-                        info_text += f"\n💳 พบโค้ต {len(coupon_list)} รายการ"
+                        if not has_campaign_item:
+                            self.show_coupon_selection_dialog(coupon_list)
+                        else:
+                            # มีหลายโค้ต แต่มี campaign item - ไม่เปิด dialog
+                            info_text += f"\n💳 พบโค้ต {len(coupon_list)} รายการ แต่ไม่สามารถใช้กับสินค้าแคมเปญ"
+                            self.discount_code_entry.delete(0, "end")
+                            self.discount_code_entry.configure(state="disabled")
+                            self.after(50, self.update_discount_display)
                 else:
                     self.discount_code_entry.delete(0, "end")
                     info_text += "\n(ยังไม่มีโค้ตให้ใช้)"
@@ -4610,7 +5045,7 @@ objShell.MinimizeAll()
         # คำนวณภาษี VAT 7%
         vat_rate = 0.07
         vat_amount = total_sales * vat_rate
-        total_with_vat = total_sales + vat_amount
+        total_with_vat = total_sales
         
         report_text = f"📊 รายงานสรุปยอดขาย\n"
         report_text += f"{'='*60}\n"
@@ -4628,7 +5063,7 @@ objShell.MinimizeAll()
         for date_key in sorted(daily_sales.keys()):
             data = daily_sales[date_key]
             daily_vat = data['total'] * vat_rate
-            report_text += f"  {date_key}: {data['total']:>10,.2f} บาท (ภาษี: {daily_vat:>8,.2f} บาท) ({data['count']} ใบ)\n"
+            report_text += f"  {date_key}: {data['total']:>10,.2f} บาท (ภาษี : {daily_vat:>8,.2f} บาท) ({data['count']} ใบ)\n"
         
         report_text += f"\n⭐ สินค้าขายดี TOP 10:\n"
         report_text += f"{'-'*60}\n"
@@ -4723,7 +5158,7 @@ objShell.MinimizeAll()
             # คำนวณภาษี VAT 7%
             vat_rate = 0.07
             vat_amount = today_final * vat_rate
-            total_with_vat = today_final + vat_amount
+            total_with_vat = today_final
             
             report_text = f"📅 รายงานยอดขายประจำวัน ({today})\n" + "="*60 + "\n\n"
             
@@ -4794,7 +5229,7 @@ objShell.MinimizeAll()
                     month_final = data['total'] - data['discount']
                     avg_per_receipt = month_final / receipt_count if receipt_count > 0 else 0
                     month_vat = month_final * vat_rate
-                    total_with_vat = month_final + month_vat
+                    total_with_vat = month_final
                     report_text += f"📌 {month_key}\n"
                     report_text += f"   ยอดขาย: {data['total']:>12,.2f} บาท\n"
                     report_text += f"   ส่วนลด: {data['discount']:>12,.2f} บาท\n"
@@ -4857,7 +5292,7 @@ objShell.MinimizeAll()
             # คำนวณภาษี VAT 7%
             vat_rate = 0.07
             vat_amount = total_final * vat_rate
-            total_with_vat = total_final + vat_amount
+            total_with_vat = total_final
             
             report_text = "⭐ รายงานสินค้าขายดี TOP 20\n" + "="*60 + "\n\n"
             report_text += f"📊 ยอดขายรวม: {total_sales:,.2f} บาท\n"
@@ -4950,7 +5385,7 @@ objShell.MinimizeAll()
                 # คำนวณภาษี VAT 7%
                 vat_rate = 0.07
                 vat_amount = total_value * vat_rate
-                total_with_vat = total_value + vat_amount
+                total_with_vat = total_value
                 
                 # แสดงรายการสรุป
                 report_text += "-" * 90 + "\n"
@@ -4993,6 +5428,7 @@ objShell.MinimizeAll()
         try:
             total_sales = 0.0
             total_cost = 0.0
+            total_discount = 0.0  # เพิ่มตัวแปรเก็บยอดส่วนลด
             
             # สร้าง dict เก็บต้นทุนของแต่ละสินค้า
             product_costs = {}
@@ -5020,18 +5456,23 @@ objShell.MinimizeAll()
                     safe_row = (row + [""] * 14)[:14]
                     # column 9 = Total ยอดขาย (index 8) - เปลี่ยนจาก row[6]
                     total_str = safe_row[8] if len(safe_row) > 8 else ""
-                    # ดึงชื่อสินค้าและจำนวน (ถ้ามีใน record)
-                    # ปกติใน Sales sheet อาจมีรายการสินค้าแยกต่างหาก หรืออาจต้องประมาณจากยอดขาย
+                    # column 11 = DiscountAmount (index 10) เพื่อลบออก
+                    discount_str = safe_row[10] if len(safe_row) > 10 else ""
                     
                     try:
                         total = float(total_str) if total_str else 0.0
                     except:
                         total = 0.0
                     
-                    total_sales += total
+                    try:
+                        discount = float(discount_str) if discount_str else 0.0
+                    except:
+                        discount = 0.0
                     
-                    # หากต้องการความแม่นยำ สามารถข้ามข้างบน
-                    # แล้วดึงข้อมูลรายการสินค้าที่ขายจาก Items/Details ใน Google Sheet
+                    # ยอดขายสุทธิ = Total - Discount
+                    net_total = total - discount
+                    total_sales += net_total
+                    total_discount += discount  # รวมส่วนลดทั้งหมด
             
             # หากต้องการคำนวณต้นทุนจากยอดขายโดยประมาณ (ถ้าไม่มีข้อมูล qty)
             # สามารถใช้อัตราราคาขายต่อต้นทุน แต่เป็นการประมาณ
@@ -5128,7 +5569,9 @@ objShell.MinimizeAll()
             report_text += "-" * 100 + "\n"
             report_text += f"  รวมจำนวนรายการที่ขาย: {len(sales_details)} รายการ\n"
             report_text += f"  รวมจำนวนสินค้า:       {total_qty} ชิ้น\n"
-            report_text += f"  ยอดรวมขาย:            ฿{total_sales:>15,.2f}\n"
+            report_text += f"  ยอดรวมขายทั้งหมด:     ฿{(total_sales + total_discount):>15,.2f}\n"
+            report_text += f"  ยอดส่วนลดทั้งหมด:     ฿{total_discount:>15,.2f}\n"
+            report_text += f"  ยอดขายหลังลด:         ฿{total_sales:>15,.2f}\n"
             report_text += f"  ภาษี VAT (7%):         ฿{vat_amount:>15,.2f}\n"
             report_text += f"  รวมพร้อมภาษี:         ฿{total_with_vat:>15,.2f}\n"
             report_text += f"  ต้นทุนสินค้าขาย:       ฿{total_cost:>15,.2f}\n"
@@ -5610,28 +6053,11 @@ objShell.MinimizeAll()
         # ชื่อเครื่องพิมพ์
         ctk.CTkLabel(printer_frame, text="เลือกเครื่องพิมพ์:", font=("Kanit", 12)).pack(anchor="w", padx=15, pady=(5, 0))
         
-        printer_list_frame = ctk.CTkFrame(printer_frame, fg_color="transparent")
-        printer_list_frame.pack(fill="x", padx=15, pady=5)
-        
-        self.settings_printer_combo = ctk.CTkComboBox(printer_list_frame, font=("Kanit", 12), width=300)
-        self.settings_printer_combo.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        
-        btn_refresh_printers = ctk.CTkButton(printer_list_frame, text="🔄 รีเฟรช", command=self.refresh_printers_list, width=80, height=32)
-        btn_refresh_printers.pack(side="left")
-        
-        # ขนาดกระดาษ
-        paper_size_frame = ctk.CTkFrame(printer_frame, fg_color="transparent")
-        paper_size_frame.pack(fill="x", padx=15, pady=5)
-        
-        ctk.CTkLabel(paper_size_frame, text="ขนาดกระดาษ:", font=("Kanit", 12)).pack(side="left", padx=(0, 10))
-        self.settings_paper_size = ctk.CTkComboBox(
-            paper_size_frame, 
-            values=["58mm", "80mm"],
-            font=("Kanit", 12),
-            width=100
-        )
-        self.settings_paper_size.set("58mm")
-        self.settings_paper_size.pack(side="left")
+        # ปุ่มตั้งค่าเครื่องปริ้น (Receipt + Label)
+        btn_select_printer = ctk.CTkButton(printer_frame, text="⚙️ ตั้งค่าเครื่องปริ้น (ใบเสร็จ + ลาเบล)", command=self.open_printer_settings,
+                                          font=("Kanit", 12), height=30, fg_color="#9B59B6", hover_color="#7D3C98", anchor="center")
+        btn_select_printer.pack(fill="x", padx=15, pady=10)
+         
         
         # ==================== ส่วนที่ 5: Stock Alert ====================
         stock_alert_frame = ctk.CTkFrame(main_scroll, fg_color="gray20", corner_radius=8)
@@ -5677,6 +6103,48 @@ objShell.MinimizeAll()
         
         ctk.CTkButton(coupon_button_frame, text="📝 ดูรายการโค้ต", command=self.open_coupon_list_dialog,
                      font=("Kanit", 12, "bold"), height=35, fg_color="#2980B9").pack(side="left", fill="x", expand=True, padx=3)
+        
+        # ตั้งค่าเงื่อนไขคูปองอัตโนมัติ
+        ctk.CTkLabel(coupon_frame, text="⚙️ ตั้งค่าเงื่อนไขคูปองอัตโนมัติ:", font=("Kanit", 12, "bold")).pack(anchor="w", padx=15, pady=(15, 10))
+        
+        # DISCOUNT05 (ลด 5%)
+        discount05_frame = ctk.CTkFrame(coupon_frame, fg_color="transparent")
+        discount05_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(discount05_frame, text="ยอดขั้นต่ำ DISCOUNT05 (ลด 5%):", font=("Kanit", 11)).pack(side="left", padx=(0, 10))
+        self.settings_discount05_amount = ctk.CTkEntry(discount05_frame, font=("Kanit", 11), height=28, width=80)
+        self.settings_discount05_amount.pack(side="left", padx=5)
+        self.settings_discount05_amount.insert(0, "200")
+        
+        ctk.CTkLabel(discount05_frame, text="บาท", font=("Kanit", 11)).pack(side="left", padx=(0, 15))
+        
+        ctk.CTkLabel(discount05_frame, text="ข้อความแจ้งเตือน:", font=("Kanit", 11)).pack(side="left", padx=(0, 10))
+        self.settings_discount05_message = ctk.CTkEntry(discount05_frame, font=("Kanit", 11), height=28, width=200)
+        self.settings_discount05_message.pack(side="left", padx=5, fill="x", expand=True)
+        self.settings_discount05_message.insert(0, "ซื้อครบ {amount} บาท\nรับคูปองลด 5% ครั้งถัดไป")
+        
+        # DISCOUNT10 (ลด 10%)
+        discount10_frame = ctk.CTkFrame(coupon_frame, fg_color="transparent")
+        discount10_frame.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(discount10_frame, text="ยอดขั้นต่ำ DISCOUNT10 (ลด 10%):", font=("Kanit", 11)).pack(side="left", padx=(0, 10))
+        self.settings_discount10_amount = ctk.CTkEntry(discount10_frame, font=("Kanit", 11), height=28, width=80)
+        self.settings_discount10_amount.pack(side="left", padx=5)
+        self.settings_discount10_amount.insert(0, "500")
+        
+        ctk.CTkLabel(discount10_frame, text="บาท", font=("Kanit", 11)).pack(side="left", padx=(0, 15))
+        
+        ctk.CTkLabel(discount10_frame, text="ข้อความแจ้งเตือน:", font=("Kanit", 11)).pack(side="left", padx=(0, 10))
+        self.settings_discount10_message = ctk.CTkEntry(discount10_frame, font=("Kanit", 11), height=28, width=200)
+        self.settings_discount10_message.pack(side="left", padx=5, fill="x", expand=True)
+        self.settings_discount10_message.insert(0, "ซื้อครบ {amount} บาท\nรับคูปองลด 10% ครั้งถัดไป")
+        
+        # ปุ่มบันทึกการตั้งค่าคูปอง
+        coupon_save_frame = ctk.CTkFrame(coupon_frame, fg_color="transparent")
+        coupon_save_frame.pack(fill="x", padx=15, pady=15)
+        
+        ctk.CTkButton(coupon_save_frame, text="💾 บันทึกการตั้งค่าคูปอง", command=self.save_settings,
+                     font=("Kanit", 12, "bold"), height=35, fg_color="#27AE60", hover_color="#1E8449").pack(fill="x")
         
         # ==================== ปุ่มบันทึก ====================
         button_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
@@ -6854,7 +7322,11 @@ Barcode: {product_details.get('barcode', '-')}
                     'printer_name': self.printer_name,
                     'paper_size': '58mm',
                     'stock_alert_enabled': True,
-                    'minimum_stock': 5
+                    'minimum_stock': 5,
+                    'discount05_amount': 200,
+                    'discount05_message': 'ซื้อครบ {amount} บาท\nรับคูปองลด 5% ครั้งถัดไป',
+                    'discount10_amount': 500,
+                    'discount10_message': 'ซื้อครบ {amount} บาท\nรับคูปองลด 10% ครั้งถัดไป'
                 }
         except Exception as e:
             print(f"Error loading settings: {e}")
@@ -6887,7 +7359,6 @@ Barcode: {product_details.get('barcode', '-')}
             self.settings_promptpay_id.delete(0, "end")
             self.settings_promptpay_id.insert(0, self.app_settings.get('promptpay_id', ''))
             
-            self.settings_paper_size.set(self.app_settings.get('paper_size', '58mm'))
             
             # Stock Alert settings
             if hasattr(self, 'settings_stock_alert_enabled'):
@@ -6900,11 +7371,33 @@ Barcode: {product_details.get('barcode', '-')}
             if hasattr(self, 'settings_minimum_stock'):
                 self.settings_minimum_stock.delete(0, "end")
                 self.settings_minimum_stock.insert(0, str(self.app_settings.get('minimum_stock', 5)))
+            
+            # Coupon settings
+            if hasattr(self, 'settings_discount05_amount'):
+                self.settings_discount05_amount.delete(0, "end")
+                self.settings_discount05_amount.insert(0, str(self.app_settings.get('discount05_amount', 200)))
+                
+                self.settings_discount05_message.delete(0, "end")
+                self.settings_discount05_message.insert(0, self.app_settings.get('discount05_message', 'ซื้อครบ {amount} บาท\nรับคูปองลด 5% ครั้งถัดไป'))
+                
+                self.settings_discount10_amount.delete(0, "end")
+                self.settings_discount10_amount.insert(0, str(self.app_settings.get('discount10_amount', 500)))
+                
+                self.settings_discount10_message.delete(0, "end")
+                self.settings_discount10_message.insert(0, self.app_settings.get('discount10_message', 'ซื้อครบ {amount} บาท\nรับคูปองลด 10% ครั้งถัดไป'))
     
     def save_settings(self):
         """บันทึกการตั้งค่าลงไฟล์ settings.json"""
         try:
             import json
+            
+            # ความสูงของกำไร discount05 และ discount10
+            try:
+                discount05_amount = int(self.settings_discount05_amount.get() or 200)
+                discount10_amount = int(self.settings_discount10_amount.get() or 500)
+            except ValueError:
+                messagebox.showerror("ข้อผิดพลาด", "กรุณากรอกยอดส่วนลดเป็นตัวเลข")
+                return
             
             self.app_settings = {
                 'shop_name': self.settings_shop_name.get(),
@@ -6916,10 +7409,14 @@ Barcode: {product_details.get('barcode', '-')}
                 'tax_id': self.settings_tax_id.get(),
                 'promptpay_type': self.settings_promptpay_type.get(),
                 'promptpay_id': self.settings_promptpay_id.get(),
-                'printer_name': self.settings_printer_combo.get(),
-                'paper_size': self.settings_paper_size.get(),
+                'printer_name': self.printer_name,  # ใช้ค่าเครื่องพิมพ์ที่ตั้งค่าไว้แล้ว
+                'paper_size': '58mm',
                 'stock_alert_enabled': self.settings_stock_alert_enabled.get() if hasattr(self, 'settings_stock_alert_enabled') else True,
-                'minimum_stock': int(self.settings_minimum_stock.get() or 5) if hasattr(self, 'settings_minimum_stock') else 5
+                'minimum_stock': int(self.settings_minimum_stock.get() or 5) if hasattr(self, 'settings_minimum_stock') else 5,
+                'discount05_amount': discount05_amount,
+                'discount05_message': self.settings_discount05_message.get(),
+                'discount10_amount': discount10_amount,
+                'discount10_message': self.settings_discount10_message.get()
             }
             
             # บันทึกลงไฟล์
@@ -6929,7 +7426,25 @@ Barcode: {product_details.get('barcode', '-')}
             # อัปเดตตัวแปร instance
             self.printer_name = self.app_settings.get('printer_name', '')
             
-            messagebox.showinfo("สำเร็จ", "บันทึกการตั้งค่าเรียบร้อย")
+            # สร้าง success window แทน messagebox
+            success_window = ctk.CTkToplevel(self)
+            success_window.title("✓ สำเร็จ")
+            success_window.geometry("400x200")
+            success_window.resizable(False, False)
+            success_window.attributes("-topmost", True)
+            self.center_window(success_window)
+            
+            ctk.CTkLabel(success_window, text="✓ บันทึกการตั้งค่าเรียบร้อย", 
+                        font=("Kanit", 16, "bold"), text_color="#2ECC71").pack(pady=20)
+            ctk.CTkLabel(success_window, text="เงื่อนไขคูปองจะมีผลจากตอนนี้เป็นต้นไป", 
+                        font=("Kanit", 14), text_color="#95A5A6").pack(pady=10)
+            
+            btn_frame = ctk.CTkFrame(success_window, fg_color="transparent")
+            btn_frame.pack(pady=20, fill="x", padx=20)
+            ctk.CTkButton(btn_frame, text="✓ ตกลง", command=success_window.destroy,
+                         font=("Kanit", 14, "bold"), height=35, fg_color="#2ECC71").pack(fill="x")
+            
+            
             
         except ValueError:
             messagebox.showerror("ข้อผิดพลาด", "กรุณากรอกอัตรา VAT เป็นตัวเลข")
@@ -7097,39 +7612,49 @@ https://developers.facebook.com/tools/explorer/
     # PRINTER LABEL Functions
     # =========================================
     def load_printer_settings(self):
-        """โหลดการตั้งค่าเครื่องปริ้นจากไฟล์ config"""
+        """โหลดการตั้งค่าเครื่องปริ้นจากไฟล์ config (Receipt + Label)"""
         try:
             if os.path.exists('printer_config.json'):
                 import json
                 with open('printer_config.json', 'r', encoding='utf-8') as f:
                     config = json.load(f)
                     self.printer_name = config.get('printer_name', '')
-                    print(f"✓ โหลดเครื่องปริ้น: {self.printer_name}")
+                    self.receipt_printer = config.get('receipt_printer', self.printer_name)
+                    self.label_printer = config.get('label_printer', self.printer_name)
+                    print(f"✓ โหลดเครื่องปริ้น - Receipt: {self.receipt_printer}, Label: {self.label_printer}")
         except Exception as e:
             print(f"⚠️ ไม่สามารถโหลด printer_config.json: {e}")
             self.printer_name = ''
+            self.receipt_printer = ''
+            self.label_printer = ''
     
     def save_printer_settings(self):
-        """บันทึกการตั้งค่าเครื่องปริ้นลงไฟล์ config"""
+        """บันทึกการตั้งค่าเครื่องปริ้นลงไฟล์ config (Receipt + Label)"""
         try:
             import json
-            config = {'printer_name': self.printer_name}
+            config = {
+                'printer_name': self.printer_name,  # เก่า - backward compatibility
+                'receipt_printer': getattr(self, 'receipt_printer', self.printer_name),
+                'label_printer': getattr(self, 'label_printer', self.printer_name)
+            }
             with open('printer_config.json', 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=2)
-                print(f"✓ บันทึกเครื่องปริ้น: {self.printer_name}")
+                print(f"✓ บันทึกเครื่องปริ้น - Receipt: {config['receipt_printer']}, Label: {config['label_printer']}")
         except Exception as e:
             print(f"❌ ไม่สามารถบันทึก printer_config.json: {e}")
 
     def open_printer_settings(self):
-        """เปิดหน้าต่างตั้งค่าเครื่องปริ้น"""
+        """เปิดหน้าต่างตั้งค่าเครื่องปริ้น (ใบเสร็จ + ลาเบล)"""
         settings_window = ctk.CTkToplevel(self)
         settings_window.title("⚙️ ตั้งค่าเครื่องปริ้น")
-        settings_window.geometry("400x300")
+        settings_window.geometry("450x600")
         settings_window.attributes("-topmost", True)
-        self.center_window(settings_window)
         
         ctk.CTkLabel(settings_window, text="⚙️ ตั้งค่าเครื่องปริ้น", 
                     font=("Kanit", 20, "bold")).pack(pady=20)
+        
+        # วาง center หน้าต่างหลังจาก layout เสร็จ
+        settings_window.after(100, lambda: self.center_window(settings_window))
         
         # ดึงรายชื่อเครื่องปริ้น Windows
         import win32print
@@ -7142,27 +7667,155 @@ https://developers.facebook.com/tools/explorer/
         if not printer_names:
             printer_names = ["Default Printer"]
         
-        ctk.CTkLabel(settings_window, text="เลือกเครื่องปริ้น:", 
-                    font=("Kanit", 14)).pack(pady=10)
+        # ========== RECEIPT PRINTER ==========
+        ctk.CTkLabel(settings_window, text="🖨️ เลือกเครื่องปริ้น ใบเสร็จ:", 
+                    font=("Kanit", 14, "bold"), text_color="#3498DB").pack(pady=(15, 10), padx=20, anchor="w")
         
-        printer_combo = ctk.CTkComboBox(settings_window, values=printer_names, 
-                                       font=("Kanit", 12), width=300)
-        printer_combo.set(self.printer_name if self.printer_name in printer_names else printer_names[0])
-        printer_combo.pack(pady=10, padx=20)
+        receipt_printer = getattr(self, 'receipt_printer', self.printer_name)
+        receipt_combo = ctk.CTkComboBox(settings_window, values=printer_names, 
+                                       font=("Kanit", 12), width=400)
+        receipt_combo.set(receipt_printer if receipt_printer in printer_names else printer_names[0])
+        receipt_combo.pack(pady=5, padx=20)
+
+        ctk.CTkLabel(settings_window, text="📋 ขนาดใบเสร็จ : 80 × 3276 มม.", 
+                    font=("Kanit", 11), text_color="gray").pack(pady=10)
+
+        # ========== LABEL PRINTER ==========
+        ctk.CTkLabel(settings_window, text="🖨️ เลือกเครื่องปริ้น ลาเบล:", 
+                    font=("Kanit", 14, "bold"), text_color="#27AE60").pack(pady=(15, 10), padx=20, anchor="w")
         
-        # ขนาดลาเบล
-        ctk.CTkLabel(settings_window, text="ขนาดลาเบล: 1 × 2 นิ้ว (25.4 × 50.8 มม.)", 
-                    font=("Kanit", 12)).pack(pady=10)
+        label_printer = getattr(self, 'label_printer', self.printer_name)
+        label_combo = ctk.CTkComboBox(settings_window, values=printer_names, 
+                                     font=("Kanit", 12), width=400)
+        label_combo.set(label_printer if label_printer in printer_names else printer_names[0])
+        label_combo.pack(pady=5, padx=20)
+        
+        # ข้อมูลเพิ่มเติม
+        ctk.CTkLabel(settings_window, text="📋 ขนาดลาเบล : 1 × 2 นิ้ว", 
+                    font=("Kanit", 11), text_color="gray").pack(pady=10)
         
         def save_settings():
-            self.printer_name = printer_combo.get()
-            self.save_printer_settings()  # บันทึกลงไฟล์
-            messagebox.showinfo("สำเร็จ", f"บันทึกเครื่องปริ้น: {self.printer_name}")
+            self.receipt_printer = receipt_combo.get()
+            self.label_printer = label_combo.get()
+            self.printer_name = self.receipt_printer  # keep default for backward compatibility
+            self.save_printer_settings()
+            
+            # ปิด settings window ก่อน
             settings_window.destroy()
+            
+            # ฟังก์ชั่นปิดหน้าต่าง
+            def close_windows():
+                """ปิดหน้าต่าง success"""
+                try:
+                    success_window.destroy()
+                except:
+                    pass
+            
+            # สร้าง messagebox ที่อยู่ด้านบนสุด (parent = self ไม่ใช่ settings_window)
+            success_window = ctk.CTkToplevel(self)
+            success_window.title("✓ สำเร็จ")
+            success_window.geometry("450x280")
+            success_window.attributes("-topmost", True)
+            success_window.lift()  # ขึ้นมาหน้าสุด
+            
+            # Header
+            ctk.CTkLabel(success_window, text="✓ บันทึกเครื่องปริ้นสำเร็จ", 
+                        font=("Kanit", 16, "bold"), text_color="#27AE60").pack(pady=15)
+            
+            # Content
+            content_frame = ctk.CTkFrame(success_window, fg_color="transparent")
+            content_frame.pack(fill="both", expand=True, padx=20, pady=10)
+            
+            ctk.CTkLabel(content_frame, text=f"🖨️ เครื่องปริ้นใบเสร็จ:\n{self.receipt_printer}", 
+                        font=("Kanit", 14)).pack(pady=8, anchor="center")
+            ctk.CTkLabel(content_frame, text=f"🖨️ เครื่องปริ้นลาเบล:\n{self.label_printer}", 
+                        font=("Kanit", 14)).pack(pady=8, anchor="center")
+            
+            # Frame ปุ่มด้านล่าง
+            btn_frame = ctk.CTkFrame(success_window, fg_color="transparent")
+            btn_frame.pack(fill="x", padx=15, pady=15)
+            
+            # ปุ่มตกลง
+            btn_ok = ctk.CTkButton(btn_frame, text="✓ ตกลง", command=close_windows,
+                                  fg_color="#2CC985", height=40, font=("Kanit", 13, "bold"))
+            btn_ok.pack(side="left", fill="x", expand=True, padx=5)
+            
+            
+            # วาง center หลังจาก layout เสร็จ
+            success_window.after(100, lambda: self.center_window(success_window))
+            
         
         btn_save = ctk.CTkButton(settings_window, text="✓ บันทึก", command=save_settings,
                                 fg_color="#2CC985", height=40, font=("Kanit", 14, "bold"))
         btn_save.pack(pady=20, padx=20, fill="x")
+
+    def change_product_image(self):
+        """เปลี่ยน/เพิ่มรูปสินค้าที่เลือก"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("เตือน", "กรุณาเลือกสินค้าที่ต้องการเปลี่ยนรูป")
+            return
+        
+        # ดึงข้อมูลสินค้า
+        item_values = self.tree.item(selected[0])['values']
+        barcode = str(item_values[1]).strip()
+        product_name = str(item_values[2]).strip()
+        image_id = str(item_values[9]).strip() if len(item_values) > 9 else ""
+        
+        # เลือกรูปใหม่
+        file_path = filedialog.askopenfilename(
+            title=f"เลือกรูปสินค้า: {product_name} ({barcode})",
+            filetypes=[("Images", "*.jpg;*.jpeg;*.png;*.bmp"), ("All Files", "*.*")]
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            # อัพโหลดรูปไปยัง Google Drive
+            from google.auth.transport.requests import Request
+            from google.oauth2.service_account import Credentials
+            
+            messagebox.showinfo("ระบบ", "กำลังอัพโหลดรูป...")
+            
+            # ลองอัพโหลด
+            media = MediaFileUpload(file_path, mimetype='image/jpeg', resumable=True)
+            
+            if image_id and image_id != "":
+                # แก้ไขรูปเดิม
+                request = self.drive_service.files().update(
+                    fileId=image_id,
+                    media_body=media,
+                    fields='id'
+                )
+            else:
+                # สร้างรูปใหม่
+                file_metadata = {
+                    'name': f"{barcode}_{product_name}.jpg",
+                    'parents': [self.drive_folder_id] if hasattr(self, 'drive_folder_id') else []
+                }
+                request = self.drive_service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id'
+                )
+            
+            file_result = request.execute()
+            new_image_id = file_result['id']
+            
+            # อัพเดท Google Sheet
+            row_idx = int(item_values[0])
+            self.sheet_products.update_cell(row_idx + 1, 10, new_image_id)  # column 10 = ImageID
+            
+            # เก็บรูปในเครื่องด้วย
+            self._save_local_image(Image.open(file_path), barcode)
+            
+            # รีเฟรช UI
+            self.load_inventory_data()
+            messagebox.showinfo("สำเร็จ", f"อัพเดทรูปสินค้า '{product_name}' เรียบร้อย")
+            
+        except Exception as e:
+            messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถอัพเดทรูป: {e}")
 
     def print_barcode_label(self):
         """ปริ้นลาเบลบาร์โค้ดของสินค้าที่เลือก"""
@@ -7176,12 +7829,14 @@ https://developers.facebook.com/tools/explorer/
         barcode = str(item_values[1]).strip()
         product_name = str(item_values[2]).strip()
         car_model = str(item_values[4]).strip() if len(item_values) > 4 else '-'
+        cost = str(item_values[6]).strip() if len(item_values) > 6 else '0'
         price = str(item_values[8]).strip() if len(item_values) > 8 else '0'
         
         self.selected_barcode_data = {
             'barcode': barcode,
             'name': product_name,
             'car_model': car_model,
+            'cost': cost,
             'price': price
         }
         
@@ -7199,12 +7854,14 @@ https://developers.facebook.com/tools/explorer/
         barcode = str(item_values[1]).strip()
         product_name = str(item_values[2]).strip()
         car_model = str(item_values[4]).strip() if len(item_values) > 4 else '-'
+        cost = str(item_values[6]).strip() if len(item_values) > 6 else '0'
         price = str(item_values[8]).strip() if len(item_values) > 8 else '0'
         
         self.selected_barcode_data = {
             'barcode': barcode,
             'name': product_name,
             'car_model': car_model,
+            'cost': cost,
             'price': price
         }
         
@@ -7218,12 +7875,14 @@ https://developers.facebook.com/tools/explorer/
         try:
             from PIL import Image, ImageDraw, ImageFont
             import tempfile
+            import qrcode
         except ImportError:
-            messagebox.showerror("ข้อผิดพลาด", "ต้องติดตั้ง Pillow\nพิมพ์: pip install Pillow")
+            messagebox.showerror("ข้อผิดพลาด", "ต้องติดตั้ง Pillow และ qrcode\nพิมพ์: pip install Pillow qrcode")
             return
         
         barcode = self.selected_barcode_data['barcode']
         product_name = self.selected_barcode_data['name']
+        cost = self.selected_barcode_data.get('cost', '0')
         car_model = self.selected_barcode_data.get('car_model', '-')
         price = self.selected_barcode_data['price']
         
@@ -7236,57 +7895,84 @@ https://developers.facebook.com/tools/explorer/
             img = Image.new('RGB', (width, height), color='white')
             draw = ImageDraw.Draw(img)
             
-            # โหลดฟอนต์ - ใช้ Kanit ที่มีในระบบ (ขนาดใหญ่ขึ้น)
+            # โหลดฟอนต์ - ใช้ Kanit ที่มีในระบบ
             try:
-                font_kanit_title = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Bold.ttf", 18)
-                font_kanit_label = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Regular.ttf", 13)
-                font_kanit_value = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Regular.ttf", 14)
-                font_kanit_barcode = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Bold.ttf", 13)
+                font_kanit_title = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Bold.ttf", 16)
+                font_kanit_label = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Regular.ttf", 10)
+                font_kanit_value = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Regular.ttf", 11)
+                font_kanit_barcode = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Bold.ttf", 12)
             except:
-                # Fallback ถ้าไม่มี Kanit
                 font_kanit_title = ImageFont.load_default()
                 font_kanit_label = ImageFont.load_default()
                 font_kanit_value = ImageFont.load_default()
                 font_kanit_barcode = ImageFont.load_default()
             
-            # วาดขอบสีน้ำเงิน
-            border_color = (51, 102, 153)
-            draw.rectangle([8, 8, width-8, height-8], outline=border_color, width=2)
+            # วาดขอบสีเทา
+            border_color = (200, 200, 200)
+            draw.rectangle([5, 5, width-5, height-5], outline=border_color, width=1)
             
-            # ข้อมูลต่างๆ
             y_pos = 15
-            line_height = 42
             
-            # ชื่อสินค้า
-            draw.text((12, y_pos), "ชื่อสินค้า :", fill='black', font=font_kanit_label, anchor='lm')
-            draw.text((155, y_pos), product_name, fill=(0, 102, 204), font=font_kanit_value, anchor='lm')
-            y_pos += line_height
+            # --- SECTION 1: LOGO + ชื่อสินค้า + ราคา ---
+            # โหลดและใส่โลโก้
+            logo_path = os.path.join(os.path.dirname(__file__), "img", "Logo.png")
+            if os.path.exists(logo_path):
+                try:
+                    logo_img = Image.open(logo_path)
+                    # ปรับขนาดโลโก้ให้เหมาะสม (ประมาณ 60x60 pixels)
+                    logo_size = 60
+                    logo_img.thumbnail((logo_size, logo_size), Image.Resampling.LANCZOS)
+                    # วาง logo ตรงกลาง
+                    logo_x = (width - logo_img.width) // 2
+                    img.paste(logo_img, (logo_x, y_pos), logo_img if logo_img.mode == 'RGBA' else None)
+                    y_pos += logo_size + 5
+                except Exception as e:
+                    print(f"⚠️ ไม่สามารถโหลด logo: {e}")
+                    # Fallback ถ้าโหลด logo ไม่สำเร็จ
+                    draw.text((width//2, y_pos), "LOGO", fill='black', font=font_kanit_label, anchor='mm')
+                    y_pos += 25
+            else:
+                # ไม่พบ logo file
+                draw.text((width//2, y_pos), "LOGO", fill='black', font=font_kanit_label, anchor='mm')
+                y_pos += 25
             
-            # รุ่นที่ใช้
-            draw.text((12, y_pos), "รุ่นที่ใช้ :", fill='black', font=font_kanit_label, anchor='lm')
-            draw.text((155, y_pos), car_model, fill=(0, 102, 204), font=font_kanit_value, anchor='lm')
-            y_pos += line_height
+            # ชื่อสินค้า (ตรงกลาง, ตัวใหญ่)
+            draw.text((width//2, y_pos), product_name, fill='black', font=font_kanit_title, anchor='mm')
+            y_pos += 28
             
-            # ราคา
-            draw.text((12, y_pos), "ราคา :", fill='black', font=font_kanit_label, anchor='lm')
-            price_text = f"฿ {price}"
-            draw.text((155, y_pos), price_text, fill=(220, 20, 60), font=font_kanit_value, anchor='lm')
-            y_pos += line_height + 5
+            # ราคาต้นทุน / ราคาส่งขาย (2 ข้าง)
+            label_font_small = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Regular.ttf", 9) if font_kanit_label != ImageFont.load_default() else ImageFont.load_default()
+            price_font = ImageFont.truetype("C:\\Users\\BRINGTOJZ\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Kanit-Bold.ttf", 10) if font_kanit_barcode != ImageFont.load_default() else ImageFont.load_default()
             
-            # เส้นคั่น
-            draw.line([(12, y_pos), (width-12, y_pos)], fill='black', width=2)
-            y_pos += 15
+            # ด้านซ้าย: ราคาต้นทุน
+            draw.text((25, y_pos), "รุ่นรถ", fill='gray', font=label_font_small, anchor='lm')
+            draw.text((25, y_pos + 15), f"{car_model}", fill='black', font=price_font, anchor='lm')
             
-            # Barcode label
-            draw.text((width//2, y_pos), "Barcode", fill='black', font=font_kanit_label, anchor='mm')
-            y_pos += 30
+            # ด้านขวา: ราคาส่งขาย
+            draw.text((width-25, y_pos), "ราคาส่งขาย", fill='gray', font=label_font_small, anchor='rm')
+            draw.text((width-25, y_pos + 15), f"฿ {price}", fill='black', font=price_font, anchor='rm')
             
-            # วาดบาร์โค้ด Code-128 แบบเล็ก ตรงกลาง
-            barcode_height = 50
-            self._draw_code128_barcode_small(draw, barcode, width//2 - 45, y_pos, 90)
-            y_pos += barcode_height + 8
+            y_pos += 45
             
-            # เลขบาร์โค้ดด้านล่าง
+            # --- SECTION 2: QR CODE ---
+            # สร้าง QR Code สำหรับบาร์โค้ด
+            qr = qrcode.QRCode(version=1, box_size=3, border=1)
+            qr.add_data(barcode)
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color="black", back_color="white")
+            
+            # ปรับขนาด QR code ให้เหมาะสม (ประมาณ 100x100 pixels)
+            qr_size = 100
+            qr_img = qr_img.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
+            
+            # วาง QR code ตรงกลาง
+            qr_x = (width - qr_size) // 2
+            img.paste(qr_img, (qr_x, y_pos))
+            
+            y_pos += qr_size + 10
+            
+            # --- SECTION 3: BARCODE TEXT ---
+            # เลขบาร์โค้ด (ตรงกลาง, ตัวใหญ่)
             draw.text((width//2, y_pos), barcode, fill='black', font=font_kanit_barcode, anchor='mm')
             
             # บันทึกลาเบลชั่วคราว
@@ -7365,28 +8051,27 @@ https://developers.facebook.com/tools/explorer/
             btn_frame.pack(fill="x", padx=10, pady=10)
             
             def print_now():
-                """ปริ้นทันที"""
-                if self.printer_name:
+                """ปริ้นทันที ใช้เครื่องปริ้นลาเบล"""
+                # ใช้ label_printer ถ้าตั้งค่าแล้ว
+                label_printer = getattr(self, 'label_printer', self.printer_name)
+                if label_printer:
                     try:
                         import win32api
-                        win32api.ShellExecute(0, "print", image_path, f'"{self.printer_name}"', ".", 0)
-                        messagebox.showinfo("สำเร็จ", f"ส่งปริ้นลาเบล: {barcode}")
+                        win32api.ShellExecute(0, "print", image_path, f'"{label_printer}"', ".", 0)
+                        messagebox.showinfo("สำเร็จ", f"ส่งปริ้นลาเบล: {barcode}\nไปยัง: {label_printer}")
                         preview_window.destroy()
                     except Exception as e:
                         messagebox.showerror("ข้อผิดพลาด", f"ปริ้นไม่สำเร็จ: {str(e)}")
                 else:
-                    messagebox.showwarning("เตือน", "กรุณาตั้งค่าเครื่องปริ้นก่อน")
+                    messagebox.showwarning("เตือน", "กรุณาตั้งค่าเครื่องปริ้นลาเบลก่อน")
             
             btn_print = ctk.CTkButton(btn_frame, text="🖨️ ปริ้น", command=print_now,
-                                     fg_color="#2E86C1", height=40, font=("Kanit", 14, "bold"))
+                                     fg_color="#27AE60", height=40, font=("Kanit", 14, "bold"))
             btn_print.pack(side="left", fill="x", expand=True, padx=5)
             
             btn_close = ctk.CTkButton(btn_frame, text="✕ ปิด", command=preview_window.destroy,
                                      fg_color="#E74C3C", height=40, font=("Kanit", 14, "bold"))
             btn_close.pack(side="left", padx=5)
-            
-        except Exception as e:
-            messagebox.showerror("ข้อผิดพลาด", f"แสดงพรีวิวไม่สำเร็จ: {str(e)}")
             
         except Exception as e:
             messagebox.showerror("ข้อผิดพลาด", f"แสดงพรีวิวไม่สำเร็จ: {str(e)}")
@@ -7460,6 +8145,27 @@ https://developers.facebook.com/tools/explorer/
                     self.coupon_database = json.load(f)
             else:
                 self.coupon_database = {}
+            
+            # เพิ่มคูปองอัตโนมัติที่ลูกค้าได้รับจากการซื้อ
+            if "DISCOUNT10" not in self.coupon_database:
+                self.coupon_database["DISCOUNT10"] = {
+                    'type': 'percent',
+                    'value': 10,
+                    'used': 0,
+                    'limit': 999,
+                    'created_date': datetime.now().strftime("%Y-%m-%d"),
+                    'description': 'ลด 10% เมื่อซื้อครบ 500 บาท'
+                }
+            
+            if "DISCOUNT05" not in self.coupon_database:
+                self.coupon_database["DISCOUNT05"] = {
+                    'type': 'percent',
+                    'value': 5,
+                    'used': 0,
+                    'limit': 999,
+                    'created_date': datetime.now().strftime("%Y-%m-%d"),
+                    'description': 'ลด 5% เมื่อซื้อครบ 200 บาท'
+                }
         except Exception as e:
             print(f"⚠ Error loading coupon database: {e}")
             self.coupon_database = {}
@@ -7663,6 +8369,12 @@ https://developers.facebook.com/tools/explorer/
             pdf.set_font(thai_font, "", 9)
             pdf.cell(0, 4, f"วิธีจ่าย : {payment_method}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
             
+            # แสดงข้อมูล Campaign (ถ้ามี)
+            campaign_items = [item for item in items if item.get('campaign_code', '')]
+            if campaign_items:
+                campaign_list = ", ".join([f"{item['name']} ({item.get('campaign_code', 'N/A')})" for item in campaign_items])
+                pdf.cell(0, 4, f"สินค้าแคมเปญ : {campaign_list}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="L")
+            
             # โค้ต
             
             if received_coupon and received_coupon != "-":
@@ -7756,16 +8468,16 @@ https://developers.facebook.com/tools/explorer/
         
         Args:
             pdf_path: เส้นทางไฟล์ PDF
-            printer_name: ชื่อเครื่องปริ้น (ถ้าเป็น None ใช้เครื่องปริ้นเริ่มต้น)
+            printer_name: ชื่อเครื่องปริ้น (ถ้าเป็น None ใช้ receipt_printer)
         """
         try:
             if not os.path.exists(pdf_path):
                 messagebox.showerror("ข้อผิดพลาด", "ไม่พบไฟล์ PDF")
                 return False
             
-            # ถ้าไม่ได้ระบุเครื่องปริ้น ใช้เครื่องปริ้นที่บันทึกไว้
+            # ถ้าไม่ได้ระบุเครื่องปริ้น ใช้ receipt_printer
             if printer_name is None:
-                printer_name = self.get_selected_printer()
+                printer_name = getattr(self, 'receipt_printer', self.printer_name)
             
             # แสดงพรีวิว PDF ในโปรแกรมที่เลือก (ใช้วิธี non-blocking ให้คงไว้)
             try:
@@ -7782,7 +8494,7 @@ https://developers.facebook.com/tools/explorer/
             if self.receipt_auto_print:
                 try:
                     os.startfile(pdf_path, "print")
-                    print(f"✓ ส่งคำสั่งปริ้นอัตโนมัติ: {pdf_path}")
+                    print(f"✓ ส่งคำสั่งปริ้นอัตโนมัติไปยัง: {printer_name}")
                 except:
                     pass
             
@@ -8132,8 +8844,8 @@ https://developers.facebook.com/tools/explorer/
         dialog = ctk.CTkToplevel(self)
         dialog.title("เพิ่มโค้ตส่วนลด")
         dialog.geometry("500x500")
-        self.after(100, lambda: self.center_window(dialog))
         dialog.attributes("-topmost", True)
+        self.after(100, lambda: self.center_window(dialog))
         
         # หัวข้อ
         ctk.CTkLabel(dialog, text="🎟️ เพิ่มโค้ตส่วนลดใหม่", 
@@ -8177,23 +8889,92 @@ https://developers.facebook.com/tools/explorer/
         def save_coupon():
             code = coupon_code.get().strip()
             if not code:
-                messagebox.showwarning("ข้อมูลไม่สมบูรณ์", "กรุณาใส่รหัสโค้ต")
+                # สร้าง custom warning window เป็น child ของ dialog
+                warning_window = ctk.CTkToplevel(dialog)
+                warning_window.title("⚠️ ข้อมูลไม่สมบูรณ์")
+                warning_window.geometry("350x200")
+                warning_window.attributes("-topmost", True)
+                warning_window.lift()
+                self.center_window(warning_window)
+                
+                ctk.CTkLabel(warning_window, text="⚠️ ข้อมูลไม่สมบูรณ์", 
+                            font=("Kanit", 14, "bold"), text_color="#F39C12").pack(pady=15)
+                ctk.CTkLabel(warning_window, text="กรุณาใส่รหัสโค้ต", 
+                            font=("Kanit", 12)).pack(pady=10)
+                
+                def close_warning():
+                    warning_window.destroy()
+                
+                ctk.CTkButton(warning_window, text="✓ ตกลง", command=close_warning,
+                             fg_color="#E74C3C", height=40, font=("Kanit", 12, "bold")).pack(fill="x", padx=20, pady=15)
                 return
             
             try:
                 value = float(coupon_value.get())
                 limit = int(coupon_limit.get()) if coupon_limit.get() else 0
             except ValueError:
-                messagebox.showerror("ข้อมูลไม่ถูกต้อง", "ค่าส่วนลดและจำนวนครั้งต้องเป็นตัวเลข")
+                # สร้าง custom error window เป็น child ของ dialog
+                error_window = ctk.CTkToplevel(dialog)
+                error_window.title("❌ ข้อมูลไม่ถูกต้อง")
+                error_window.geometry("400x200")
+                error_window.attributes("-topmost", True)
+                error_window.lift()
+                self.center_window(error_window)
+                
+                ctk.CTkLabel(error_window, text="❌ ข้อมูลไม่ถูกต้อง", 
+                            font=("Kanit", 14, "bold"), text_color="#E74C3C").pack(pady=15)
+                ctk.CTkLabel(error_window, text="ค่าส่วนลดและจำนวนครั้ง\nต้องเป็นตัวเลข", 
+                            font=("Kanit", 12)).pack(pady=10)
+                
+                def close_error():
+                    error_window.destroy()
+                
+                ctk.CTkButton(error_window, text="✓ ตกลง", command=close_error,
+                             fg_color="#2CC985", height=40, font=("Kanit", 12, "bold")).pack(fill="x", padx=20, pady=15)
                 return
             
             success, msg = self.add_coupon(code, coupon_type_var.get(), value, limit)
             if success:
-                # ปิด dialog ก่อน แล้วจึงแสดง message box
+                # ปิด dialog
                 dialog.destroy()
-                self.after(100, lambda: messagebox.showinfo("สำเร็จ", f"เพิ่มโค้ต {code} เรียบร้อยแล้ว"))
+                
+                # แสดง success window ที่อยู่หน้าสุด
+                success_window = ctk.CTkToplevel(self)
+                success_window.title("✓ สำเร็จ")
+                success_window.geometry("350x200")
+                success_window.attributes("-topmost", True)
+                success_window.lift()
+                self.center_window(success_window)
+                
+                ctk.CTkLabel(success_window, text="✓ สำเร็จ", 
+                            font=("Kanit", 16, "bold"), text_color="#27AE60").pack(pady=15)
+                ctk.CTkLabel(success_window, text=f"เพิ่มโค้ต {code} เรียบร้อยแล้ว", 
+                            font=("Kanit", 12)).pack(pady=10)
+                
+                def close_success():
+                    success_window.destroy()
+                
+                ctk.CTkButton(success_window, text="✓ ตกลง", command=close_success,
+                             fg_color="#2CC985", height=40, font=("Kanit", 12, "bold")).pack(fill="x", padx=20, pady=15)
             else:
-                messagebox.showerror("ผิดพลาด", msg)
+                # แสดง error window เป็น child ของ dialog
+                error_window = ctk.CTkToplevel(dialog)
+                error_window.title("❌ ผิดพลาด")
+                error_window.geometry("400x180")
+                error_window.attributes("-topmost", True)
+                error_window.lift()
+                self.center_window(error_window)
+                
+                ctk.CTkLabel(error_window, text="❌ ผิดพลาด", 
+                            font=("Kanit", 14, "bold"), text_color="#E74C3C").pack(pady=15)
+                ctk.CTkLabel(error_window, text=msg, 
+                            font=("Kanit", 12)).pack(pady=10)
+                
+                def close_error():
+                    error_window.destroy()
+                
+                ctk.CTkButton(error_window, text="✓ ตกลง", command=close_error,
+                             fg_color="#E74C3C", height=40, font=("Kanit", 12, "bold")).pack(fill="x", padx=20, pady=15)
         
         ctk.CTkButton(button_frame, text="✓ บันทึก", command=save_coupon,
                      fg_color="#27AE60", height=40, font=("Kanit", 12, "bold")).pack(side="left", fill="both", expand=True, padx=3)
@@ -8563,10 +9344,38 @@ https://developers.facebook.com/tools/explorer/
         campaign_name_entry = ctk.CTkEntry(dialog, font=("Kanit", 11), placeholder_text="เช่น Flash Sale 50%")
         campaign_name_entry.pack(fill="x", padx=15, pady=(0, 10))
         
-        # Barcode
+        # Barcode - ใช้ ttk.Combobox แทน CTkComboBox เพื่อหลีกเลี่ยง bug
         ctk.CTkLabel(dialog, text="Barcode สินค้า *", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
-        barcode_entry = ctk.CTkEntry(dialog, font=("Kanit", 11), placeholder_text="สแกน barcode")
-        barcode_entry.pack(fill="x", padx=15, pady=(0, 10))
+        
+        # เตรียมรายชื่อสินค้าจาก sheet_products
+        product_list = []
+        try:
+            if hasattr(self, 'sheet_products') and self.sheet_products:
+                records = self.sheet_products.get_all_values()
+                print(f"[DEBUG] โหลดสินค้า: {len(records)} แถว")
+                for idx, row in enumerate(records[1:], start=2):  # ข้ามหัวตาราง
+                    if len(row) >= 3:
+                        barcode = row[1].strip() if row[1] else ''
+                        name = row[2].strip() if row[2] else ''
+                        price = row[8].strip() if len(row) > 8 and row[8] else '0'
+                        if barcode and name:
+                            # ฟอร์แมต: "111 - ไส DID (฿150.00)"
+                            display_text = f"{barcode} - {name} (฿{price})"
+                            product_list.append(display_text)
+                            print(f"[DEBUG] เพิ่มสินค้า: {display_text}")
+        except Exception as e:
+            print(f"[ERROR] ไม่สามารถโหลดสินค้า: {e}")
+            messagebox.showwarning("คำเตือน", f"ไม่สามารถโหลดรายชื่อสินค้า: {e}\n\nสามารถกรอก barcode ด้วยตนเองได้")
+        
+        if not product_list:
+            product_list = ["(ไม่มีข้อมูลสินค้า - กรุณากรอก barcode ด้วยตนเอง)"]
+        
+        # ใช้ ttk.Combobox แทน CTkComboBox เพื่อหลีกเลี่ยงปัญหา AttributeError
+        import tkinter.ttk as ttk
+        barcode_combo = ttk.Combobox(dialog, values=product_list, font=("Kanit", 11), 
+                                     state="normal", width=50)
+        barcode_combo.pack(fill="x", padx=15, pady=(0, 10))
+        barcode_combo.set("เลือกสินค้า")
         
         # Full Price
         ctk.CTkLabel(dialog, text="ราคาเต็ม *", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
@@ -8602,7 +9411,15 @@ https://developers.facebook.com/tools/explorer/
         def save_campaign():
             try:
                 campaign_name = campaign_name_entry.get().strip()
-                barcode = barcode_entry.get().strip()
+                barcode_selected = barcode_combo.get().strip()
+                
+                # แยก barcode จากข้อความ "barcode - name ..."
+                if " - " in barcode_selected:
+                    barcode = barcode_selected.split(" - ")[0].strip()
+                else:
+                    # ถ้าเป็นการกรอกด้วยตนเอง ใช้ข้อมูลที่กรอกลงมา
+                    barcode = barcode_selected
+                
                 full_price = float(full_price_entry.get())
                 discount_price = float(discount_price_entry.get())
                 discount_until = discount_until_entry.get_date().strftime("%Y-%m-%d")
@@ -8634,8 +9451,8 @@ https://developers.facebook.com/tools/explorer/
                 self.load_campaigns_data()
                 self.after(100, lambda: messagebox.showinfo("สำเร็จ", f"เพิ่มแคมเปญ '{campaign_name}' เรียบร้อย"))
                 
-            except ValueError:
-                messagebox.showerror("ข้อผิดพลาด", "กรุณากรอกราคา และจำนวนเป็นตัวเลข")
+            except ValueError as ve:
+                messagebox.showerror("ข้อผิดพลาด", f"กรุณากรอกราคา และจำนวนเป็นตัวเลข\nรายละเอียด: {ve}")
             except Exception as e:
                 messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถบันทึกแคมเปญ: {e}")
         

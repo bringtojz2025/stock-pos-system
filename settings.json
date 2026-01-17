@@ -8,6 +8,12 @@
   "tax_id": "1809900615167",
   "promptpay_type": "เบอร์โทรศัพท์",
   "promptpay_id": "0875428331",
-  "printer_name": "Microsoft Print to PDF",
-  "paper_size": "80mm"
+  "printer_name": "",
+  "paper_size": "58mm",
+  "stock_alert_enabled": true,
+  "minimum_stock": 5,
+  "discount05_amount": 300,
+  "discount05_message": "ซื้อครบ {amount} บาท\nรับคูปองลด 5% ครั้งถัดไป",
+  "discount10_amount": 500,
+  "discount10_message": "ซื้อครบ {amount} บาท\nรับคูปองลด 10% ครั้งถัดไป"
 }

@@ -26,5 +26,12 @@
         "used": 1,
         "limit": 10,
         "created_date": "2026-01-13"
+    },
+    "99": {
+        "type": "fixed",
+        "value": 99.0,
+        "used": 0,
+        "limit": 1,
+        "created_date": "2026-01-18"
     }
 }
