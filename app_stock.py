@@ -919,6 +919,15 @@ objShell.MinimizeAll()
                 
                 if campaign['barcode'] == barcode and campaign['status'] == 'Active':
                     print(f"[DEBUG] Found matching campaign: {campaign_key}")
+                    
+                    # ตรวจสอบว่าสต็อกของสินค้าปกติเหลือหรือไม่ (สำคัญ!)
+                    if current_stock <= 0:
+                        print(f"[DEBUG] Stock is 0, cannot use campaign price")
+                        # สินค้าหมด ใช้ราคาปกติแทน
+                        campaign_price = price
+                        is_campaign = False
+                        break
+                    
                     # ตรวจสอบว่าแคมเปญยังไม่หมดอายุ
                     try:
                         discount_until = datetime.strptime(campaign['discount_until'], "%Y-%m-%d")
@@ -932,7 +941,21 @@ objShell.MinimizeAll()
                             
                             print(f"[DEBUG] Campaign stock: {campaign_stock}, Qty in cart: {qty_in_campaign_cart}")
                             
-                            # ถ้า campaign_stock = 0 แสดงว่าไม่มีข้อจำกัด (ไม่จำกัด)
+                            # ตรวจสอบว่าสต็อกแคมเปญเหลือ 0 หรือไม่ ถ้า 0 ให้ปิดแคมเปญ
+                            if campaign_stock <= 0:
+                                print(f"[DEBUG] Campaign stock is 0 or less, deactivating campaign")
+                                # ปิดแคมเปญโดยเปลี่ยนสถานะเป็น Inactive
+                                try:
+                                    self.sheet_campaign.update_cell(campaign['row'], 9, 'Inactive')
+                                    print(f"✓ ปิดแคมเปญ: {campaign['name']} (สต็อกหมด)")
+                                except Exception as e:
+                                    print(f"⚠ ไม่สามารถปิดแคมเปญ: {e}")
+                                
+                                # ใช้ราคาปกติแทน
+                                campaign_price = price
+                                is_campaign = False
+                                break
+                            
                             # ถ้า qty >= campaign_stock แสดงว่าสต็อกหมด
                             if campaign_stock > 0 and qty_in_campaign_cart >= campaign_stock:
                                 # แจ้งเตือนว่าสต็อกแคมเปญหมดแล้ว กลับไปใช้ราคาปกติ - ด้วย Dialog สวยงาม
@@ -2267,6 +2290,11 @@ objShell.MinimizeAll()
                             new_campaign_stock = max(0, current_campaign_stock - item['qty'])
                             self.sheet_campaign.update_cell(campaign['row'], 7, new_campaign_stock)
                             print(f"✓ ตัด Stock Campaign: {item['name']} จาก {current_campaign_stock} เป็น {new_campaign_stock}")
+                            
+                            # ถ้าสต็อก Campaign เหลือ 0 ให้เปลี่ยนสถานะเป็น Inactive
+                            if new_campaign_stock == 0:
+                                self.sheet_campaign.update_cell(campaign['row'], 9, 'Inactive')  # column 3 = Status
+                                print(f"⚠ เปลี่ยนสถานะแคมเปญเป็น Inactive: {campaign['name']} (สต็อกหมด)")
                         except Exception as e:
                             print(f"⚠ ไม่สามารถตัดสต็อก Campaign {item['name']}: {e}")
                         break
@@ -9201,19 +9229,19 @@ https://developers.facebook.com/tools/explorer/
         toolbar.pack(fill="x", padx=5, pady=5)
         
         ctk.CTkButton(toolbar, text="➕ เพิ่มแคมเปญใหม่", command=self.show_add_campaign_dialog,
-                     font=("Kanit", 11, "bold"), fg_color="#2E7D32").pack(side="left", padx=2)
+                     font=("Kanit", 14, "bold"), fg_color="#2E7D32").pack(side="left", padx=2)
         
         ctk.CTkButton(toolbar, text="✎ แก้ไข", command=self.edit_selected_campaign,
-                     font=("Kanit", 11, "bold"), fg_color="#1976D2").pack(side="left", padx=2)
+                     font=("Kanit", 14, "bold"), fg_color="#1976D2").pack(side="left", padx=2)
         
         ctk.CTkButton(toolbar, text="🗑️ ลบ", command=self.delete_selected_campaign,
-                     font=("Kanit", 11, "bold"), fg_color="#D32F2F").pack(side="left", padx=2)
+                     font=("Kanit", 14, "bold"), fg_color="#D32F2F").pack(side="left", padx=2)
         
         ctk.CTkButton(toolbar, text="📋 ตรวจสอบแคมเปญ", command=self.check_campaigns,
-                     font=("Kanit", 11, "bold"), fg_color="#F57C00").pack(side="left", padx=2)
+                     font=("Kanit", 14, "bold"), fg_color="#F57C00").pack(side="left", padx=2)
         
         ctk.CTkButton(toolbar, text="🔄 รีเฟรช", command=self.load_campaigns_data,
-                     font=("Kanit", 11, "bold")).pack(side="left", padx=2)
+                     font=("Kanit", 14, "bold")).pack(side="left", padx=2)
         
         # Table
         columns = ("แคมเปญ", "Barcode", "ราคาเต็ม", "ราคาลด", "ลดถึง", "จำนวน", "สต็อก", "สถานะ")
@@ -9475,19 +9503,19 @@ https://developers.facebook.com/tools/explorer/
         
         dialog = ctk.CTkToplevel(self)
         dialog.title("แก้ไขแคมเปญ")
-        dialog.geometry("500x600")
+        dialog.geometry("500x400")
         dialog.transient(self)
         self.after(100, lambda: self.center_window(dialog))
         
         # Campaign Name
-        ctk.CTkLabel(dialog, text="ชื่อแคมเปญ", font=("Kanit", 12, "bold")).pack(pady=(15, 5), padx=15, anchor="w")
-        campaign_name_entry = ctk.CTkEntry(dialog, font=("Kanit", 11))
+        ctk.CTkLabel(dialog, text="ชื่อแคมเปญ", font=("Kanit", 16, "bold")).pack(pady=(15, 5), padx=15, anchor="w")
+        campaign_name_entry = ctk.CTkEntry(dialog, font=("Kanit", 14))
         campaign_name_entry.insert(0, campaign['name'])
         campaign_name_entry.pack(fill="x", padx=15, pady=(0, 10))
         
         # Barcode
-        ctk.CTkLabel(dialog, text="Barcode", font=("Kanit", 12, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
-        barcode_entry = ctk.CTkEntry(dialog, font=("Kanit", 11))
+        ctk.CTkLabel(dialog, text="Barcode", font=("Kanit", 16, "bold")).pack(pady=(10, 5), padx=15, anchor="w")
+        barcode_entry = ctk.CTkEntry(dialog, font=("Kanit", 14))
         barcode_entry.insert(0, campaign['barcode'])
         barcode_entry.pack(fill="x", padx=15, pady=(0, 10))
         
@@ -9495,13 +9523,13 @@ https://developers.facebook.com/tools/explorer/
         price_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         price_frame.pack(fill="x", padx=15, pady=(10, 10))
         
-        ctk.CTkLabel(price_frame, text="ราคาเต็ม", font=("Kanit", 11, "bold")).pack(side="left", padx=(0, 10))
-        full_price_entry = ctk.CTkEntry(price_frame, font=("Kanit", 11), width=120)
+        ctk.CTkLabel(price_frame, text="ราคาเต็ม", font=("Kanit", 16, "bold")).pack(side="left", padx=(0, 10))
+        full_price_entry = ctk.CTkEntry(price_frame, font=("Kanit", 14), width=120)
         full_price_entry.insert(0, str(campaign['full_price']))
         full_price_entry.pack(side="left", padx=(0, 20))
         
-        ctk.CTkLabel(price_frame, text="ราคาลด", font=("Kanit", 11, "bold")).pack(side="left", padx=(0, 10))
-        discount_price_entry = ctk.CTkEntry(price_frame, font=("Kanit", 11), width=120)
+        ctk.CTkLabel(price_frame, text="ราคาลด", font=("Kanit", 16, "bold")).pack(side="left", padx=(0, 10))
+        discount_price_entry = ctk.CTkEntry(price_frame, font=("Kanit", 14), width=120)
         discount_price_entry.insert(0, str(campaign['discount_price']))
         discount_price_entry.pack(side="left")
         
@@ -9509,8 +9537,8 @@ https://developers.facebook.com/tools/explorer/
         stock_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         stock_frame.pack(fill="x", padx=15, pady=(10, 10))
         
-        ctk.CTkLabel(stock_frame, text="สต็อก", font=("Kanit", 11, "bold")).pack(side="left", padx=(0, 10))
-        stock_entry = ctk.CTkEntry(stock_frame, font=("Kanit", 11), width=100)
+        ctk.CTkLabel(stock_frame, text="สต็อก", font=("Kanit", 16, "bold")).pack(side="left", padx=(0, 10))
+        stock_entry = ctk.CTkEntry(stock_frame, font=("Kanit", 14), width=100)
         stock_entry.insert(0, str(campaign['stock']))
         stock_entry.pack(side="left")
         
@@ -9533,9 +9561,9 @@ https://developers.facebook.com/tools/explorer/
                 messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถอัปเดตแคมเปญ: {e}")
         
         ctk.CTkButton(button_frame, text="✓ บันทึก", command=update_campaign,
-                     fg_color="#2E7D32", font=("Kanit", 12, "bold")).pack(side="left", padx=5, fill="x", expand=True)
+                     fg_color="#2E7D32", font=("Kanit", 14, "bold")).pack(side="left", padx=5, fill="x", expand=True)
         ctk.CTkButton(button_frame, text="✕ ยกเลิก", command=dialog.destroy,
-                     fg_color="#D32F2F", font=("Kanit", 12, "bold")).pack(side="left", padx=5, fill="x", expand=True)
+                     fg_color="#D32F2F", font=("Kanit", 14, "bold")).pack(side="left", padx=5, fill="x", expand=True)
 
     def delete_selected_campaign(self):
         """ลบแคมเปญที่เลือก"""
@@ -9568,7 +9596,7 @@ https://developers.facebook.com/tools/explorer/
             window.attributes("-topmost", True)
             self.after(100, lambda: self.center_window(window))
             
-            ctk.CTkLabel(window, text="📊 สถานะแคมเปญ Sale", font=("Kanit", 16, "bold")).pack(pady=10)
+            ctk.CTkLabel(window, text="📊 สถานะแคมเปญ Sale", font=("Kanit", 18, "bold")).pack(pady=10)
             
             # Get all campaigns
             if not self.sheet_campaign:
@@ -9608,9 +9636,9 @@ https://developers.facebook.com/tools/explorer/
             info_text += f"📦 สต็อกหมด: {out_of_stock} รายการ\n"
             info_text += f"\n💰 ทั้งหมด: {active_count + expired_count + out_of_stock} รายการ"
             
-            ctk.CTkLabel(window, text=info_text, font=("Kanit", 12), justify="left").pack(pady=20, padx=20, fill="both", expand=True)
+            ctk.CTkLabel(window, text=info_text, font=("Kanit", 16), justify="left").pack(pady=20, padx=20, fill="both", expand=True)
             
-            ctk.CTkButton(window, text="ปิด", command=window.destroy, font=("Kanit", 11, "bold")).pack(pady=10)
+            ctk.CTkButton(window, text="ปิด", command=window.destroy, font=("Kanit", 14, "bold")).pack(pady=10)
             
         except Exception as e:
             messagebox.showerror("ข้อผิดพลาด", f"ไม่สามารถตรวจสอบแคมเปญ: {e}")
